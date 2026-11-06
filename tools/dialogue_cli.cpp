@@ -4,6 +4,7 @@
 //   lpf_dialogue_cli input.wav answers.mid [--render out.wav] [--patience 0.5] [--interruption 0.3]
 //                    [--length 1] [--memory 0.5] [--fidelity 0.6] [--contrast 0.2] [--scale 0.7]
 //                    [--low 36] [--high 96] [--sensitivity 0.5] [--gate -55] [--seed 1]
+//                    [--bright 1] [--random 0.2] [--humanize 0.3]
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -176,6 +177,9 @@ int main(int argc, char** argv) {
         else if (k == "--sensitivity") p.sensitivity = (float)v;
         else if (k == "--gate") p.gateDb = (float)v;
         else if (k == "--seed") seed = (uint32_t)v;
+        else if (k == "--bright") p.bright = v > 0.5;
+        else if (k == "--random") p.randomness = (float)v;
+        else if (k == "--humanize") p.humanize = (float)v;
         else { std::fprintf(stderr, "unknown option %s\n", k.c_str()); return 2; }
     }
     std::vector<float> in;
@@ -200,6 +204,12 @@ int main(int argc, char** argv) {
     int answers = 0;
     for (auto& x : c.ev) if (x.on) ++answers;
     std::printf("heard %d notes/sounds, answered with %d notes\n", heard, answers);
+    {
+        e.updateHarmony();
+        const Harmony& h = e.harmony();
+        if (h.keyRoot >= 0) std::printf("scale: %s %s\n", Harmony::pcName(h.keyRoot), Harmony::scaleName(h.scale));
+        if (h.chordRoot >= 0) std::printf("last chord: %s%s\n", Harmony::pcLetter(h.chordRoot), Harmony::chordSuffix(h.chord));
+    }
     for (auto& x : c.ev)
         if (x.on) std::printf("  %8.3f s  note %3d  vel %3d\n", x.t / sr, x.pitch, x.vel);
     if (!writeMidi(argv[2], c.ev, sr)) { std::fprintf(stderr, "cannot write %s\n", argv[2]); return 1; }

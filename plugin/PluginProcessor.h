@@ -49,6 +49,7 @@ public:
     std::atomic<int> uiMemory{0};
     std::atomic<bool> uiHearing{false}, uiAnswering{false};
     std::atomic<float> uiLevelDb{-120.f}, uiPitch{0.f};
+    std::atomic<int> uiKeyRoot{-1}, uiScale{0}, uiChordRoot{-1}, uiChord{0};
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -66,7 +67,8 @@ private:
     std::atomic<float>* pHigh = nullptr;     std::atomic<float>* pSens = nullptr;
     std::atomic<float>* pGate = nullptr;     std::atomic<float>* pGrid = nullptr;
     std::atomic<float>* pChannel = nullptr;  std::atomic<float>* pFreeze = nullptr;
-    std::atomic<float>* pRespond = nullptr;
+    std::atomic<float>* pRespond = nullptr;  std::atomic<float>* pMode = nullptr;
+    std::atomic<float>* pRandom = nullptr;   std::atomic<float>* pHumanize = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DialogueProcessor)
 };

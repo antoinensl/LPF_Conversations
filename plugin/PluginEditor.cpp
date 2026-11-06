@@ -30,6 +30,12 @@ DialogueEditor::DialogueEditor(DialogueProcessor& p) : AudioProcessorEditor(&p),
                "100 % : répond dès que la patience est atteinte, même si tu joues encore."));
     addKnob(length, "length", "Longueur",
             u8("Longueur de la réponse par rapport à ce qu'il vient d'entendre."));
+    addKnob(humanize, "humanize", "Humanisation",
+            u8("0 % : machine. 100 % : délai de réaction variable, micro-timing, nuances qui respirent, "
+               "dernière note tenue."));
+    addKnob(random, "random", "Hasard",
+            u8("Notes inventées dans la gamme et l'accord détectés, ornements, silences, "
+               "rythmes déplacés, réponses parfois laissées passer."));
     addKnob(memory, "memory", u8("Mémoire"),
             u8("0 % : ne se souvient que des dernières notes. 100 % : de tout ce que tu as joué."));
     addKnob(fidelity, "fidelity", u8("Fidélité"),
@@ -37,7 +43,7 @@ DialogueEditor::DialogueEditor(DialogueProcessor& p) : AudioProcessorEditor(&p),
     addKnob(contrast, "contrast", "Contraste",
             u8("0 % : imite. 100 % : s'oppose (registre, rythme, contour, nuances)."));
     addKnob(scale, "scale", u8("Tonalité"),
-            u8("Probabilité de rester dans les notes que tu as jouées."));
+            u8("Probabilité de rester dans la gamme détectée (ou les notes jouées tant qu'elle n'est pas sûre)."));
     addKnob(sens, "sensitivity", u8("Sensibilité"), u8("Détection des attaques."));
     addKnob(gate, "gate", "Seuil", u8("En dessous de ce niveau, c'est du silence. Règle-le juste au-dessus du bruit de fond."));
     addKnob(low, "low", "Note basse", u8("Note la plus grave de la réponse."));
@@ -52,6 +58,15 @@ DialogueEditor::DialogueEditor(DialogueProcessor& p) : AudioProcessorEditor(&p),
     addAndMakeVisible(gridLabel);
     grid.setTooltip(u8("Cale les réponses sur la grille du séquenceur (transport en lecture)."));
 
+    mode.addItemList({"Instrument", "Bright"}, 1);
+    addAndMakeVisible(mode);
+    modeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(proc.apvts, "mode", mode);
+    modeLabel.setText(u8("Écoute"), juce::dontSendNotification);
+    modeLabel.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(modeLabel);
+    mode.setTooltip(u8("Instrument : 55 Hz - 2 kHz. Bright : oiseaux, voix parlée ou chantée "
+                       "(100 Hz - 10 kHz, trilles, glissandi suivis note à note)."));
+
     freeze.setButtonText(u8("Figer la mémoire"));
     respond.setButtonText(u8("Répondre"));
     addAndMakeVisible(freeze);
@@ -62,7 +77,7 @@ DialogueEditor::DialogueEditor(DialogueProcessor& p) : AudioProcessorEditor(&p),
     clear.onClick = [this] { proc.requestClear(); };
     addAndMakeVisible(clear);
 
-    setSize(640, 430);
+    setSize(760, 470);
     startTimerHz(20);
 }
 
@@ -87,7 +102,9 @@ void DialogueEditor::timerCallback() {
     memSize = proc.uiMemory.load();
     level = proc.uiLevelDb.load();
     pitch = proc.uiPitch.load();
-    repaint(0, 0, getWidth(), 56);
+    keyRoot = proc.uiKeyRoot.load(); scaleType = proc.uiScale.load();
+    chordRoot = proc.uiChordRoot.load(); chordType = proc.uiChord.load();
+    repaint(0, 0, getWidth(), 76);
 }
 
 static juce::String noteName(float midi) {
@@ -97,6 +114,7 @@ static juce::String noteName(float midi) {
 }
 
 void DialogueEditor::paint(juce::Graphics& g) {
+    const int W = getWidth();
     g.fillAll(colours::bg);
     g.setColour(colours::text);
     g.setFont(juce::FontOptions(20.f, juce::Font::bold));
@@ -115,57 +133,63 @@ void DialogueEditor::paint(juce::Graphics& g) {
     g.setColour(colours::dim);
     g.setFont(juce::FontOptions(13.f));
     juce::String info = juce::String(memSize) + u8(" notes en mémoire");
-    if (pitch > 0.f && hearing) info << "  ·  " << noteName(pitch);
-    g.drawText(info, 410, 14, 214, 24, juce::Justification::centredRight);
+    if (pitch > 0.f && hearing) info << u8("  ·  ") << noteName(pitch);
+    g.drawText(info, W - 330, 14, 314, 24, juce::Justification::centredRight);
 
-    // level bar
+    // level bar + gate marker
+    const float bw = (float)W - 32.f;
     const float lv = juce::jlimit(0.f, 1.f, (level + 70.f) / 70.f);
     g.setColour(juce::Colour(0xff2a2f37));
-    g.fillRoundedRectangle(16.f, 44.f, 608.f, 4.f, 2.f);
+    g.fillRoundedRectangle(16.f, 44.f, bw, 4.f, 2.f);
     g.setColour(colours::listen.withAlpha(0.8f));
-    g.fillRoundedRectangle(16.f, 44.f, 608.f * lv, 4.f, 2.f);
+    g.fillRoundedRectangle(16.f, 44.f, bw * lv, 4.f, 2.f);
     const float gp = juce::jlimit(0.f, 1.f, ((float)gate.slider.getValue() + 70.f) / 70.f);
     g.setColour(colours::text);
-    g.fillRect(16.f + 608.f * gp - 1.f, 41.f, 2.f, 10.f);
+    g.fillRect(16.f + bw * gp - 1.f, 41.f, 2.f, 10.f);
+
+    // what it thinks you are playing in
+    g.setFont(juce::FontOptions(13.f));
+    juce::String key = keyRoot >= 0
+        ? juce::String::fromUTF8(lpfd::Harmony::pcName(keyRoot)) + " " + juce::String::fromUTF8(lpfd::Harmony::scaleName(scaleType))
+        : juce::String(u8("…"));
+    juce::String chord = chordRoot >= 0
+        ? juce::String(lpfd::Harmony::pcLetter(chordRoot)) + lpfd::Harmony::chordSuffix(chordType)
+        : juce::String(u8("…"));
+    g.setColour(colours::dim);
+    g.drawText("Gamme", 16, 54, 50, 18, juce::Justification::centredLeft);
+    g.drawText("Accord", 260, 54, 50, 18, juce::Justification::centredLeft);
+    g.setColour(colours::text);
+    g.drawText(key, 66, 54, 190, 18, juce::Justification::centredLeft);
+    g.drawText(chord, 312, 54, 120, 18, juce::Justification::centredLeft);
 
     auto section = [&](juce::Rectangle<int> r, const juce::String& title) {
         g.setColour(colours::panel);
         g.fillRoundedRectangle(r.toFloat(), 8.f);
         g.setColour(colours::dim);
         g.setFont(juce::FontOptions(11.f, juce::Font::bold));
-        g.drawText(title, r.getX() + 10, r.getY() + 6, r.getWidth() - 20, 14,
-                   juce::Justification::centredLeft);
+        g.drawText(title, r.getX() + 10, r.getY() + 6, r.getWidth() - 20, 14, juce::Justification::centredLeft);
     };
-    section({16, 60, 300, 160}, u8("RÉACTIVITÉ"));
-    section({324, 60, 300, 160}, u8("CARACTÈRE"));
-    section({16, 228, 608, 186}, u8("ÉCOUTE ET SORTIE"));
+    section({16, 80, 330, 160}, u8("RÉACTIVITÉ"));
+    section({354, 80, 390, 160}, u8("CARACTÈRE"));
+    section({16, 248, 728, 206}, u8("ÉCOUTE ET SORTIE"));
 }
 
 void DialogueEditor::resized() {
-    auto place = [](Knob& k, int x, int y) {
-        k.label.setBounds(x, y, 90, 16);
-        k.slider.setBounds(x + 5, y + 16, 80, 96);
+    auto place = [](Knob& k, int x, int y, int w) {
+        k.label.setBounds(x, y, w, 16);
+        k.slider.setBounds(x + (w - 76) / 2, y + 16, 76, 96);
     };
-    place(patience, 26, 84);
-    place(interruption, 121, 84);
-    place(length, 216, 84);
-    place(memory, 330, 84);
-    place(fidelity, 402, 84);
-    place(contrast, 474, 84);
-    place(scale, 546, 84);
-    for (Knob* k : {&memory, &fidelity, &contrast, &scale}) {
-        auto b = k->slider.getBounds();
-        k->slider.setBounds(b.getX() - 4, b.getY(), 76, b.getHeight());
-        k->label.setBounds(b.getX() - 9, k->label.getY(), 86, 16);
-    }
-    place(sens, 26, 252);
-    place(gate, 116, 252);
-    place(low, 206, 252);
-    place(high, 296, 252);
-    place(channel, 386, 252);
-    gridLabel.setBounds(486, 252, 120, 16);
-    grid.setBounds(491, 276, 110, 24);
-    freeze.setBounds(30, 376, 170, 24);
-    respond.setBounds(200, 376, 120, 24);
-    clear.setBounds(470, 376, 140, 26);
+    int x = 24;
+    for (Knob* k : {&patience, &interruption, &length, &humanize}) { place(*k, x, 104, 78); x += 79; }
+    x = 360;
+    for (Knob* k : {&memory, &fidelity, &contrast, &scale, &random}) { place(*k, x, 104, 76); x += 76; }
+    modeLabel.setBounds(26, 276, 120, 16);
+    mode.setBounds(30, 298, 112, 24);
+    x = 158;
+    for (Knob* k : {&sens, &gate, &low, &high, &channel}) { place(*k, x, 272, 84); x += 86; }
+    gridLabel.setBounds(600, 276, 130, 16);
+    grid.setBounds(610, 298, 110, 24);
+    freeze.setBounds(30, 414, 170, 24);
+    respond.setBounds(200, 414, 120, 24);
+    clear.setBounds(590, 412, 140, 26);
 }

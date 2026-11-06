@@ -441,7 +441,7 @@ static void testFidelity() {
     for (auto& n : melody(0.2, 24, 0.2, 0.15, motif)) addTone(sig, n);
     runEngine(e, sig);
     GenNote g[16];
-    int k = e.generate(12, g);
+    int k = e.generate(12, g, 16);
     // intervals of the motif (cyclic)
     std::vector<int> iv;
     for (size_t i = 0; i < motif.size(); ++i)
@@ -486,6 +486,7 @@ static void testNoAllocAndFuzz() {
         p.memory = u(rng); p.fidelity = u(rng); p.contrast = u(rng); p.scaleLock = u(rng);
         p.rangeLow = 20 + (int)(u(rng) * 60); p.rangeHigh = p.rangeLow + (int)(u(rng) * 50);
         p.sensitivity = u(rng); p.grid = run % 4; p.channel = 1 + run % 16;
+        p.bright = run % 3 == 1; p.randomness = u(rng); p.humanize = u(rng);
         Engine e = makeEngine(p);
         std::vector<float> sig((size_t)(SR * 6.0), 0.f);
         for (int i = 0; i < 40; ++i) {
@@ -508,6 +509,201 @@ static void testNoAllocAndFuzz() {
     }
 }
 
+// ---- v0.2: bright mode, harmony, randomness, humanize ----
+static void addSine(std::vector<float>& buf, double start, double dur, double hz0, double hz1, double amp) {
+    const int s0 = (int)(start * SR), len = (int)(dur * SR), ramp = (int)(0.003 * SR);
+    double ph = 0.0;
+    for (int i = 0; i < len && s0 + i < (int)buf.size(); ++i) {
+        double env = std::min(1.0, std::min((double)i / ramp, (double)(len - i) / ramp));
+        double hz = hz0 * std::pow(hz1 / hz0, (double)i / len);
+        buf[s0 + i] += (float)(amp * env * std::sin(ph));
+        ph += 2.0 * M_PI * hz / SR;
+    }
+}
+
+static std::vector<HeardEvent> analyseBright(const std::vector<float>& sig) {
+    AnalyzerSettings st; st.bright = true;
+    return analyse(sig, st);
+}
+
+static void testBright() {
+    std::printf("[bright mode: birds and voices]\n");
+    for (double hz : {2500.0, 4200.0, 6000.0, 9000.0}) {
+        std::vector<float> sig((size_t)(SR * 0.6), 0.f);
+        addSine(sig, 0.1, 0.2, hz, hz, 0.2);
+        auto s = starts(analyseBright(sig));
+        const double truth = 69.0 + 12.0 * std::log2(hz / 440.0);
+        CHECK(s.size() == 1 && s[0].pitched && std::fabs(s[0].pitch - truth) < 0.35,
+              "whistle %.0f Hz: %zu starts, pitch %.2f (truth %.2f)", hz, s.size(),
+              s.empty() ? 0.f : s[0].pitch, truth);
+        if (!s.empty())
+            std::printf("  whistle %5.0f Hz -> %.2f (truth %.2f), sure after %.1f ms\n", hz, s[0].pitch,
+                        truth, (s[0].commitTime / SR - 0.1) * 1000.0);
+    }
+    {
+        // trill: 14 notes of 30 ms, 12 ms apart, alternating 4.0 / 4.6 kHz
+        std::vector<float> sig((size_t)(SR * 1.0), 0.f);
+        for (int i = 0; i < 14; ++i) addSine(sig, 0.1 + i * 0.042, 0.030, i % 2 ? 4600.0 : 4000.0, i % 2 ? 4600.0 : 4000.0, 0.2);
+        auto sb = starts(analyseBright(sig));
+        auto si = starts(analyse(sig));
+        std::printf("  trill of 14 notes: bright hears %zu, instrument mode hears %zu\n", sb.size(), si.size());
+        CHECK(sb.size() >= 13, "trill: bright heard %zu of 14", sb.size());
+    }
+    {
+        // rising chirp 2 -> 4 kHz in 200 ms: heard as a contour of several notes
+        std::vector<float> sig((size_t)(SR * 0.6), 0.f);
+        addSine(sig, 0.1, 0.2, 2000.0, 4000.0, 0.2);
+        auto s = starts(analyseBright(sig));
+        bool rising = s.size() >= 3;
+        for (size_t i = 1; i < s.size(); ++i) rising = rising && s[i].pitch > s[i - 1].pitch;
+        std::printf("  chirp 2->4 kHz: %zu notes\n", s.size());
+        CHECK(rising, "chirp: %zu notes, should be >= 3 and rising", s.size());
+    }
+    {
+        // sung syllables around 150-250 Hz, 90 ms each
+        std::vector<int> pitches = {50, 52, 55, 57, 55, 52};
+        std::vector<float> sig((size_t)(SR * 1.2), 0.f);
+        for (auto& n : melody(0.1, 6, 0.13, 0.09, pitches, 0.25)) addTone(sig, n);
+        auto s = starts(analyseBright(sig));
+        int good = 0;
+        for (size_t i = 0; i < s.size() && i < 6; ++i) if (std::fabs(s[i].pitch - pitches[i]) < 0.4) ++good;
+        CHECK(s.size() == 6 && good == 6, "syllables: %zu starts, %d right", s.size(), good);
+    }
+}
+
+struct NullSink : MidiSink {
+    void noteOn(int, int, int, int) override {}
+    void noteOff(int, int, int) override {}
+};
+
+static Harmony listen(const std::vector<float>& sig) {
+    Params p; p.respond = false;
+    Engine e = makeEngine(p);
+    NullSink n;
+    Transport tr;
+    for (int64_t pos = 0; pos < (int64_t)sig.size(); pos += 256)
+        e.process(sig.data() + pos, (int)std::min<int64_t>(256, sig.size() - pos), tr, n);
+    e.updateHarmony();
+    return e.harmony();
+}
+
+static std::string chordName(const Harmony& h) {
+    return h.chordRoot < 0 ? "?" : std::string(Harmony::pcLetter(h.chordRoot)) + Harmony::chordSuffix(h.chord);
+}
+static std::string keyName(const Harmony& h) {
+    return h.keyRoot < 0 ? "?" : std::string(Harmony::pcName(h.keyRoot)) + " " + Harmony::scaleName(h.scale);
+}
+
+static void testHarmony() {
+    std::printf("[scale and chord detection]\n");
+    struct C { const char* name; std::vector<int> notes; int root, type, alt; };
+    std::vector<C> chords = {
+        {"C (strummed)", {48, 52, 55, 60}, 0, Harmony::Maj, -1},
+        {"Am (strummed)", {45, 52, 57, 60, 64}, 9, Harmony::Min, Harmony::Min7},
+        {"G7 (strummed)", {43, 47, 50, 53, 55}, 7, Harmony::Dom7, -1},
+        {"Fmaj7 (strummed)", {41, 48, 52, 57, 60}, 5, Harmony::Maj7, -1},
+    };
+    for (auto& c : chords) {
+        std::vector<float> sig((size_t)(SR * 2.0), 0.f);
+        for (int i = 0; i < (int)c.notes.size(); ++i)
+            addTone(sig, {0.1 + i * 0.015, 1.6, midiToHz(c.notes[i]), 0.12}, true);
+        Harmony h = listen(sig);
+        std::printf("  %-18s -> %s\n", c.name, chordName(h).c_str());
+        CHECK(h.chordRoot == c.root && (h.chord == c.type || h.chord == c.alt), "%s detected as %s", c.name,
+              chordName(h).c_str());
+    }
+    {
+        // chord change: C then G, the detection follows
+        std::vector<float> sig((size_t)(SR * 3.2), 0.f);
+        for (int i = 0; i < 4; ++i) addTone(sig, {0.1 + i * 0.015, 1.4, midiToHz(std::vector<int>{48, 52, 55, 60}[i]), 0.12}, true);
+        for (int i = 0; i < 4; ++i) addTone(sig, {1.6 + i * 0.015, 1.4, midiToHz(std::vector<int>{43, 47, 50, 55}[i]), 0.12}, true);
+        Harmony h = listen(sig);
+        std::printf("  %-18s -> %s\n", "C then G", chordName(h).c_str());
+        CHECK(h.chordRoot == 7 && h.chord == Harmony::Maj, "C then G detected as %s", chordName(h).c_str());
+    }
+    {
+        // arpeggiated Am7, monophonic
+        std::vector<float> sig((size_t)(SR * 2.5), 0.f);
+        for (auto& n : melody(0.1, 8, 0.25, 0.22, {57, 60, 64, 67})) addTone(sig, n);
+        Harmony h = listen(sig);
+        std::printf("  %-18s -> %s\n", "Am7 (arpeggio)", chordName(h).c_str());
+        CHECK(h.chordRoot == 9 && (h.chord == Harmony::Min7 || h.chord == Harmony::Min) ,
+              "Am7 arpeggio detected as %s", chordName(h).c_str());
+    }
+    struct S { const char* name; std::vector<int> mel; uint16_t mask; };
+    // D dorian melody (white keys centred on D) and A harmonic minor (with G#)
+    std::vector<S> scales = {
+        {"D dorian melody", {62, 64, 65, 67, 69, 71, 72, 74, 72, 69, 65, 62, 64, 62, 69, 62}, 0b101010110101},
+        {"A harm. minor", {57, 59, 60, 62, 64, 65, 68, 69, 68, 64, 60, 57, 59, 68, 69, 57}, 0},
+    };
+    // A harmonic minor = pcs 9 11 0 2 4 5 8
+    scales[1].mask = (1 << 9) | (1 << 11) | (1 << 0) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 8);
+    for (auto& sc : scales) {
+        std::vector<float> sig((size_t)(SR * 5.0), 0.f);
+        for (auto& n : melody(0.1, 16, 0.25, 0.22, sc.mel)) addTone(sig, n);
+        Harmony h = listen(sig);
+        std::printf("  %-18s -> %s\n", sc.name, keyName(h).c_str());
+        CHECK(h.scaleMask == sc.mask, "%s: mask %03x want %03x (%s)", sc.name, h.scaleMask, sc.mask, keyName(h).c_str());
+    }
+}
+
+static void testRandomAndHumanize() {
+    std::printf("[randomness and humanize]\n");
+    std::vector<int> penta = {60, 62, 64, 67, 69, 72, 69, 67, 64, 62, 60, 57};
+    std::vector<float> sig((size_t)(SR * 14.0), 0.f);
+    for (int r = 0; r < 3; ++r)
+        for (auto& n : melody(0.2 + r * 4.0, 12, 0.18, 0.15, penta)) addTone(sig, n);
+    auto run = [&](float rnd, float hum) {
+        Params p;
+        p.patience = 0.3f; p.interruption = 0.f; p.length = 1.5f;
+        p.scaleLock = 1.f; p.randomness = rnd; p.humanize = hum;
+        Engine e = makeEngine(p);
+        return runEngine(e, sig);
+    };
+    auto plain = ons(run(0.f, 0.f)), wild = ons(run(1.f, 0.f));
+    int outScale = 0;
+    for (auto& m : wild) {
+        const int pc = m.pitch % 12;
+        if (!(pc == 0 || pc == 2 || pc == 4 || pc == 7 || pc == 9)) ++outScale;
+    }
+    int same = 0;
+    for (size_t i = 0; i < std::min(plain.size(), wild.size()); ++i) same += plain[i].pitch == wild[i].pitch;
+    std::printf("  randomness 0: %zu notes, randomness 1: %zu notes (%d out of scale, %d/%zu identical)\n",
+                plain.size(), wild.size(), outScale, same, std::min(plain.size(), wild.size()));
+    CHECK(outScale == 0, "random notes out of the scale: %d", outScale);
+    CHECK(same < (int)std::min(plain.size(), wild.size()) * 0.7, "randomness changed too little");
+
+    // reflex delays: steady without humanize, varied (but still quick) with it
+    auto delays = [&](float hum, double& mean, double& sd, double& vsd) {
+        Params p; p.patience = 0.f; p.interruption = 1.f; p.humanize = hum;
+        Engine e = makeEngine(p);
+        std::vector<float> s2((size_t)(SR * 6.0), 0.f);
+        auto mel = melody(0.2, 12, 0.4, 0.3, {60, 64, 67, 72});
+        for (auto& n : mel) addTone(s2, n);
+        auto o = ons(runEngine(e, s2));
+        std::vector<double> d;
+        std::vector<double> v;
+        for (auto& n : mel) {
+            double best = 1e9;
+            for (auto& m : o) { double x = m.t / SR - n.start; if (x >= 0 && x < best) best = x; }
+            if (best < 1.0) d.push_back(best);
+        }
+        for (auto& m : o) v.push_back(m.vel);
+        mean = 0; for (double x : d) mean += x; mean /= std::max<size_t>(1, d.size());
+        sd = 0; for (double x : d) sd += (x - mean) * (x - mean); sd = std::sqrt(sd / std::max<size_t>(1, d.size()));
+        double vm = 0; for (double x : v) vm += x; vm /= std::max<size_t>(1, v.size());
+        vsd = 0; for (double x : v) vsd += (x - vm) * (x - vm); vsd = std::sqrt(vsd / std::max<size_t>(1, v.size()));
+    };
+    double m0, s0, v0, m1, s1, v1;
+    delays(0.f, m0, s0, v0);
+    delays(1.f, m1, s1, v1);
+    std::printf("  reflex delay: machine %.0f +- %.1f ms, humanized %.0f +- %.1f ms; velocity spread %.1f -> %.1f\n",
+                m0 * 1000, s0 * 1000, m1 * 1000, s1 * 1000, v0, v1);
+    CHECK(s0 < 0.003, "machine delay should be steady (%.1f ms)", s0 * 1000);
+    CHECK(s1 > 0.008 && m1 < 0.09, "humanized delay %.0f +- %.1f ms", m1 * 1000, s1 * 1000);
+    CHECK(v1 > v0 + 2.0, "humanize should spread velocities (%.1f vs %.1f)", v1, v0);
+}
+
 int main() {
     testPitchAccuracy();
     testMelodyAndRepeats();
@@ -521,6 +717,9 @@ int main() {
     testRangeScaleBalance();
     testFidelity();
     testGrid();
+    testBright();
+    testHarmony();
+    testRandomAndHumanize();
     testNoAllocAndFuzz();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

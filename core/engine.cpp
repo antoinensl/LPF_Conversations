@@ -21,6 +21,7 @@ void Engine::reset() {
     answering_ = false;
     for (auto& s : pool_) s.used = false;
     std::fill(soundId_, soundId_ + 128, 0u);
+    harmony_ = Harmony();
 }
 
 void Engine::setParams(const Params& p) {
@@ -36,6 +37,8 @@ void Engine::setParams(const Params& p) {
     p_.rangeHigh = std::clamp(p_.rangeHigh, 0, 127);
     p_.channel = std::clamp(p_.channel, 1, 16);
     p_.grid = std::clamp(p_.grid, 0, 3);
+    p_.randomness = std::clamp(p_.randomness, 0.f, 1.f);
+    p_.humanize = std::clamp(p_.humanize, 0.f, 1.f);
 }
 
 float Engine::rnd() {
@@ -63,35 +66,182 @@ int Engine::foldToRange(int p) const {
     return p;
 }
 
-int Engine::snapToScale(int p, const float* w, int dir) const {
+// ------------------------------------------------------------------ harmony
+static const uint16_t kScaleMasks[Harmony::NumScales] = {
+    0b101010110101, // major        0 2 4 5 7 9 11
+    0b010110101101, // minor        0 2 3 5 7 8 10
+    0b011010101101, // dorian       0 2 3 5 7 9 10
+    0b011010110101, // mixolydian   0 2 4 5 7 9 10
+    0b010110101011, // phrygian     0 1 3 5 7 8 10
+    0b101011010101, // lydian       0 2 4 6 7 9 11
+    0b100110101101, // harm. minor  0 2 3 5 7 8 11
+    0b001010010101, // maj penta    0 2 4 7 9
+    0b010010101001, // min penta    0 3 5 7 10
+    0b010011101001, // blues        0 3 5 6 7 10
+    0b010101010101, // whole tone   0 2 4 6 8 10
+};
+static const uint16_t kChordMasks[Harmony::NumChords] = {
+    (1 << 0) | (1 << 4) | (1 << 7),             // maj
+    (1 << 0) | (1 << 3) | (1 << 7),             // min
+    (1 << 0) | (1 << 4) | (1 << 7) | (1 << 10), // 7
+    (1 << 0) | (1 << 4) | (1 << 7) | (1 << 11), // maj7
+    (1 << 0) | (1 << 3) | (1 << 7) | (1 << 10), // m7
+    (1 << 0) | (1 << 3) | (1 << 6),             // dim
+    (1 << 0) | (1 << 5) | (1 << 7),             // sus4
+    (1 << 0) | (1 << 7),                        // 5
+};
+
+static uint16_t rotateMask(uint16_t m, int root) {
+    uint32_t x = ((uint32_t)m << root) | ((uint32_t)m >> (12 - root));
+    return (uint16_t)(x & 0xFFF);
+}
+static int popcount12(uint16_t m) { int c = 0; for (int i = 0; i < 12; ++i) c += (m >> i) & 1; return c; }
+
+const char* Harmony::scaleName(int s) {
+    static const char* n[] = {"majeur", "mineur", "dorien", "mixolydien", "phrygien", "lydien",
+                              "mineur harmonique", "penta majeure", "penta mineure", "blues", "par tons"};
+    return s >= 0 && s < NumScales ? n[s] : "";
+}
+const char* Harmony::chordSuffix(int c) {
+    static const char* n[] = {"", "m", "7", "maj7", "m7", "dim", "sus4", "5"};
+    return c >= 0 && c < NumChords ? n[c] : "";
+}
+const char* Harmony::pcName(int pc) {
+    static const char* n[] = {"Do", "Do#", "R\xc3\xa9", "Mib", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "Sib", "Si"};
+    return pc >= 0 && pc < 12 ? n[pc] : "";
+}
+const char* Harmony::pcLetter(int pc) {
+    static const char* n[] = {"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
+    return pc >= 0 && pc < 12 ? n[pc] : "";
+}
+
+// remove the faint floor (leakage, stray harmonics) so that only real notes vote
+static void floor12(float* v, float f) {
+    for (int i = 0; i < 12; ++i) v[i] = std::max(0.f, v[i] - f);
+    float s = 0.f;
+    for (int i = 0; i < 12; ++i) s += v[i];
+    if (s > 1e-9f) for (int i = 0; i < 12; ++i) v[i] /= s;
+}
+
+static void normalise12(float* v) {
+    float s = 0.f;
+    for (int i = 0; i < 12; ++i) s += v[i];
+    if (s > 1e-9f) for (int i = 0; i < 12; ++i) v[i] /= s;
+}
+
+void Engine::updateHarmony() {
+    // --- key: long-term audio chroma + notes in memory
+    float audioK[12], notesK[12] = {}, keyV[12] = {};
+    const float wA = analyzer_.chroma(true, audioK);
+    float wN = 0.f;
+    const int64_t cnt = memory_.count();
+    const int64_t window = (int64_t)std::lround(8.0 * std::pow(2.0, p_.memory * 9.0));
+    for (int64_t s = std::max(memory_.first(), cnt - std::max<int64_t>(window, 32)); s < cnt; ++s) {
+        const MemEvent& e = memory_.at(s);
+        if (!e.pitched) continue;
+        const int pc = (((int)std::lround(e.pitch)) % 12 + 12) % 12;
+        const float w = e.velocity * (e.dur > 0.f ? std::min(e.dur, 1.f) : 0.25f) + 0.01f;
+        notesK[pc] += w; wN += 1.f;
+    }
+    normalise12(notesK);
+    const bool haveA = wA > 20.f, haveN = wN >= 1.f;
+    for (int i = 0; i < 12; ++i)
+        keyV[i] = (haveA ? audioK[i] : 0.f) * (haveN ? 0.5f : 1.f) + (haveN ? notesK[i] : 0.f) * (haveA ? 0.5f : 1.f);
+    floor12(keyV, 0.03f);
+    harmony_.keyRoot = -1; harmony_.scaleMask = 0; harmony_.keyConfidence = 0.f;
+    if ((haveA || haveN) && !(wN >= 6.f || wA > 100.f)) {
+        // not enough heard yet to name a scale: stay on the notes actually played
+        for (int i = 0; i < 12; ++i) if (keyV[i] > 0.05f) harmony_.scaleMask |= (uint16_t)(1 << i);
+    } else if (haveA || haveN) {
+        float best = -1e9f;
+        for (int sc = 0; sc < Harmony::NumScales; ++sc)
+            for (int root = 0; root < 12; ++root) {
+                const uint16_t m = rotateMask(kScaleMasks[sc], root);
+                float in = 0.f;
+                for (int i = 0; i < 12; ++i) if (m >> i & 1) in += keyV[i];
+                const float score = in - 1.2f * (1.f - in) - 0.02f * popcount12(m) +
+                                    0.25f * keyV[root] + 0.08f * keyV[(root + 7) % 12];
+                if (score > best) {
+                    best = score;
+                    harmony_.keyRoot = root; harmony_.scale = sc; harmony_.scaleMask = m;
+                    harmony_.keyConfidence = std::clamp(2.f * in - 1.f, 0.f, 1.f);
+                }
+            }
+    }
+
+    // --- chord: short-term audio chroma + the last notes, weighted by how recent they are
+    float audioC[12], notesC[12] = {}, chordV[12] = {};
+    const float wC = analyzer_.chroma(false, audioC);
+    float wR = 0.f;
+    for (int64_t s = recent_.first(); s < recent_.count(); ++s) {
+        const MemEvent& e = recent_.at(s);
+        if (!e.pitched) continue;
+        const float age = (float)((now_ - e.time) / sr_);
+        const float w = e.velocity * std::exp(-std::max(0.f, age) / 1.5f) *
+                        (e.dur > 0.f ? std::min(e.dur, 1.f) : 0.3f);
+        notesC[(((int)std::lround(e.pitch)) % 12 + 12) % 12] += w;
+        wR += w;
+    }
+    normalise12(notesC);
+    const bool haveC = wC > 5.f, haveR = wR > 0.05f;
+    for (int i = 0; i < 12; ++i)
+        chordV[i] = (haveC ? audioC[i] : 0.f) * (haveR ? 0.5f : 1.f) + (haveR ? notesC[i] : 0.f) * (haveC ? 0.5f : 1.f);
+    floor12(chordV, 0.04f);
+    harmony_.chordRoot = -1; harmony_.chordMask = 0; harmony_.chordConfidence = 0.f;
+    if (haveC || haveR) {
+        float best = -1e9f;
+        for (int ch = 0; ch < Harmony::NumChords; ++ch)
+            for (int root = 0; root < 12; ++root) {
+                const uint16_t m = rotateMask(kChordMasks[ch], root);
+                float in = 0.f;
+                for (int i = 0; i < 12; ++i) if (m >> i & 1) in += chordV[i];
+                const float score = in - (1.f - in) - 0.04f * popcount12(m) + 0.3f * chordV[root];
+                if (score > best) {
+                    best = score;
+                    harmony_.chordRoot = root; harmony_.chord = ch; harmony_.chordMask = m;
+                    harmony_.chordConfidence = std::clamp(2.f * in - 1.f, 0.f, 1.f);
+                }
+            }
+    }
+}
+
+int Engine::snapToMask(int p, uint16_t mask, int dir) {
+    if (!mask) return p;
     const int s = dir >= 0 ? 1 : -1;
     for (int d = 0; d <= 6; ++d) {
-        int a = p + d * s, b = p - d * s;
-        if (w[((a % 12) + 12) % 12] > 0.f) return a;
-        if (w[((b % 12) + 12) % 12] > 0.f) return b;
+        const int a = p + d * s, b = p - d * s;
+        if (mask >> (((a % 12) + 12) % 12) & 1) return a;
+        if (mask >> (((b % 12) + 12) % 12) & 1) return b;
     }
     return p;
 }
 
-int Engine::generate(int n, GenNote* out) {
+// An invented note near `prev`: a chord tone (leap) or a scale step.
+int Engine::randomTone(int prev, bool chordTone) {
+    const uint16_t mask = chordTone && harmony_.chordMask ? harmony_.chordMask : harmony_.scaleMask;
+    if (!mask) return prev;
+    int cand[16];
+    int nc = 0;
+    const int span = chordTone ? 9 : 4;
+    for (int d = -span; d <= span && nc < 16; ++d) {
+        if (d == 0 && rnd() < 0.7f) continue;     // prefer moving
+        const int q = prev + d;
+        if (mask >> (((q % 12) + 12) % 12) & 1) cand[nc++] = q;
+    }
+    if (!nc) return snapToMask(prev, mask, 1);
+    return cand[std::min(nc - 1, (int)(rnd() * nc))];
+}
+
+int Engine::generate(int n, GenNote* out, int cap) {
     if (memory_.empty()) return 0;
-    n = std::clamp(n, 1, kMaxAnswer);
+    cap = std::clamp(cap, 1, kMaxAnswer);
+    n = std::clamp(n, 1, cap);
+    updateHarmony();
     const int64_t cnt = memory_.count();
     const int64_t window = (int64_t)std::lround(8.0 * std::pow(2.0, p_.memory * 9.0));
     const int64_t base = std::max(memory_.first(), cnt - window);
-
-    // pitch classes heard (for scale lock)
-    float pcw[12] = {};
-    float pcMax = 0.f;
-    for (int64_t s = base; s < cnt; ++s) {
-        const MemEvent& e = memory_.at(s);
-        if (!e.pitched) continue;
-        int pc = (((int)std::lround(e.pitch)) % 12 + 12) % 12;
-        pcw[pc] += e.velocity * (e.dur > 0.f ? std::min(e.dur, 1.f) : 0.25f) + 0.01f;
-    }
-    for (float w : pcw) pcMax = std::max(pcMax, w);
-    for (float& w : pcw) if (w < 0.15f * pcMax) w = 0.f;
-    const bool haveScale = pcMax > 0.f;
+    const uint16_t scaleMask = harmony_.scaleMask;
+    const float r = p_.randomness, h = p_.humanize;
 
     // context = what was just played
     int8_t ctxI[16], ctxR[16];
@@ -117,16 +267,18 @@ int Engine::generate(int n, GenNote* out) {
     const float c = p_.contrast;
     const float center = 0.5f * (p_.rangeLow + p_.rangeHigh);
     if (rnd() < c * 0.8f) prev += meanPitch < center ? 12 : -12;
+    prev = foldToRange(prev);
     const float target = meanIoi < 0.2f ? 2.f : (meanIoi > 0.6f ? 0.5f : 1.f);
     const float factor = 1.f + (target - 1.f) * c;
 
     const int maxOrder = (int)std::lround(p_.fidelity * 4.f);
     float t = 0.f;
-    for (int i = 0; i < n; ++i) {
-        int cap = maxOrder;
-        if (rnd() < (1.f - p_.fidelity) * 0.25f) cap = 0;
+    int k = 0;
+    for (int i = 0; i < n && k < cap; ++i) {
+        int ord = maxOrder;
+        if (rnd() < (1.f - p_.fidelity) * 0.25f) ord = 0;
         int64_t pick = -1;
-        for (int order = std::min(cap, ctxLen); order >= 1 && pick < 0; --order) {
+        for (int order = std::min(ord, ctxLen); order >= 1 && pick < 0; --order) {
             int matches = 0;
             for (int64_t s = base + order; s < cnt; ++s) {
                 bool ok = true;
@@ -146,29 +298,77 @@ int Engine::generate(int n, GenNote* out) {
 
         int interval = e.interval;
         if (rnd() < c * 0.6f) interval = -interval;
-        if (i > 0) t += std::clamp(e.ioi * factor, 0.03f, 2.f);
+
+        // rhythm (with occasional random displacement)
+        if (i > 0) {
+            float ioi = e.ioi * factor;
+            if (rnd() < r * 0.25f) {
+                const float m[] = {0.5f, 1.5f, 2.f};
+                ioi *= m[std::min(2, (int)(rnd() * 3.f))];
+            }
+            t += std::clamp(ioi, 0.03f, 2.f);
+        }
+
+        // pitch: learnt, then maybe invented, then maybe pulled into the scale
         int pitch = foldToRange(prev + interval);
-        if (haveScale && rnd() < p_.scaleLock)
-            pitch = foldToRange(snapToScale(pitch, pcw, interval));
+        const bool edge = i == 0 || i == n - 1;
+        if (scaleMask && rnd() < r * 0.5f)
+            pitch = foldToRange(randomTone(prev, edge || rnd() < 0.4f));
+        if (scaleMask && rnd() < p_.scaleLock)
+            pitch = foldToRange(snapToMask(pitch, scaleMask, interval));
+        if (edge && harmony_.chordMask && rnd() < r * 0.6f)       // land on a chord tone
+            pitch = foldToRange(snapToMask(pitch, harmony_.chordMask, interval));
+
+        // a breath: skip a note now and then (keeps its time slot)
+        const bool rest = i > 0 && i < n - 1 && rnd() < r * 0.12f;
+
         float dur = e.dur > 0.f ? e.dur : std::min(e.ioi, 0.3f);
-        dur = std::clamp(dur * factor, 0.03f, 4.f);
+        dur *= factor;
+        dur *= 1.f + h * 0.3f * rndSigned();
+        if (i == n - 1) dur *= 1.f + 0.8f * h;                     // let the last note ring
+        dur = std::clamp(dur, 0.03f, 4.f);
+
         float vel = e.velocity;
         vel = vel + ((1.05f - vel) - vel) * c * 0.7f;
-        out[i].time = t;
-        out[i].dur = dur;
-        out[i].pitch = std::clamp(pitch, 0, 127);
-        out[i].velocity = std::clamp((int)std::lround(1.f + std::clamp(vel, 0.f, 1.f) * 126.f), 1, 127);
-        prev = out[i].pitch;
+        const float arc = std::sin(3.14159265f * (i + 0.5f) / n);  // phrase shape
+        vel *= 1.f + h * 0.3f * (arc - 0.5f);
+        vel += h * 0.12f * rndSigned();
+        const int midiVel = std::clamp((int)std::lround(1.f + std::clamp(vel, 0.f, 1.f) * 126.f), 1, 127);
+
+        float when = t;
+        if (i > 0) when = std::max(0.f, t + h * 0.025f * 0.5f * (rndSigned() + rndSigned()));
+
+        if (!rest) {
+            // ornament: a quick neighbour note just before
+            if (scaleMask && when > 0.08f && k + 1 < cap && rnd() < r * 0.12f) {
+                const int dir = rnd() < 0.5f ? 1 : -1;
+                int g = snapToMask(pitch + dir, scaleMask, dir);
+                if (g == pitch) g = snapToMask(pitch + 2 * dir, scaleMask, dir);
+                if (g != pitch) {
+                    out[k].time = when - 0.06f;
+                    out[k].dur = 0.05f;
+                    out[k].pitch = std::clamp(foldToRange(g), 0, 127);
+                    out[k].velocity = std::max(1, midiVel * 3 / 4);
+                    ++k;
+                }
+            }
+            out[k].time = when;
+            out[k].dur = dur;
+            out[k].pitch = std::clamp(pitch, 0, 127);
+            out[k].velocity = midiVel;
+            ++k;
+            prev = pitch;
+        }
 
         if (ctxLen == 16) {
-            for (int k = 1; k < 16; ++k) { ctxI[k - 1] = ctxI[k]; ctxR[k - 1] = ctxR[k]; }
+            for (int q = 1; q < 16; ++q) { ctxI[q - 1] = ctxI[q]; ctxR[q - 1] = ctxR[q]; }
             --ctxLen;
         }
         ctxI[ctxLen] = (int8_t)std::clamp(interval, -24, 24);
         ctxR[ctxLen] = e.ioiClass;
         ++ctxLen;
     }
-    return n;
+    return k;
 }
 
 int64_t Engine::snapToGrid(int64_t t, const Transport& tr, int64_t blockStart) const {
@@ -191,11 +391,15 @@ void Engine::schedule(int64_t t, uint32_t id, int pitch, int vel, bool on) {
 }
 
 void Engine::trigger(int64_t t, const Transport& tr, int64_t blockStart) {
-    const int n = std::clamp((int)std::lround(newEvents_ * p_.length), 1, kMaxAnswer);
+    float len = newEvents_ * p_.length;
+    len *= 1.f + 0.5f * p_.randomness * rndSigned();
+    const int n = std::clamp((int)std::lround(len), 1, kMaxAnswer);
     newEvents_ = 0;
     if (!p_.respond) return;
+    // a human does not answer after exactly the same delay every time
+    t += (int64_t)(p_.humanize * rnd() * (0.05 + 0.25 * p_.patience) * sr_);
     GenNote notes[kMaxAnswer];
-    const int k = generate(n, notes);
+    const int k = generate(n, notes, kMaxAnswer);
     int freeSlots = 0;
     for (auto& s : pool_) if (!s.used) ++freeSlots;
     for (int i = 0; i < k && freeSlots >= 2; ++i, freeSlots -= 2) {
@@ -238,6 +442,7 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
     m.ioi = lastStartTime_ < 0 ? 0.25f
                                : std::min(4.f, (float)((e.time - lastStartTime_) / sr_));
     m.ioiClass = ioiClassOf(m.ioi);
+    m.time = e.time;
     m.interval = recent_.empty()
                      ? 0
                      : (int8_t)std::clamp((int)std::lround(e.pitch - recent_.last().pitch), -24, 24);
@@ -253,8 +458,11 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
     if (answering_ && p_.interruption < 0.5f) yieldAt(e.commitTime);
 
     if (newEvents_ >= eventsNeeded() &&
-        (p_.interruption >= 1.f || rnd() < p_.interruption))
-        trigger(std::max(e.commitTime, blockStart), tr, blockStart);
+        (p_.interruption >= 1.f || rnd() < p_.interruption)) {
+        // with randomness, it sometimes lets a chance to answer go by (and says more next time)
+        if (!(p_.randomness > 0.f && rnd() < p_.randomness * 0.2f))
+            trigger(std::max(e.commitTime, blockStart), tr, blockStart);
+    }
 }
 
 void Engine::emit(int64_t blockStart, int n, MidiSink& out) {
@@ -314,6 +522,7 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
     AnalyzerSettings as;
     as.sensitivity = p_.sensitivity;
     as.gateDb = p_.gateDb;
+    as.bright = p_.bright;
     analyzer_.setSettings(as);
 
     const int64_t blockStart = now_;
@@ -328,6 +537,11 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
 
     emit(blockStart, n, out);
     now_ += n;
+    harmonyCountdown_ -= n;
+    if (harmonyCountdown_ <= 0) {          // ~20 times a second, for the display
+        harmonyCountdown_ = (int)(sr_ * 0.05);
+        updateHarmony();
+    }
 }
 
 } // namespace lpfd

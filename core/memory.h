@@ -14,6 +14,7 @@ struct MemEvent {
     float dur = 0.f;      // seconds; 0 while the note is still sounding
     int8_t interval = 0;  // semitones from previous event
     int8_t ioiClass = 0;  // log2 rhythmic class (half-octave steps around 1/8 s)
+    int64_t time = 0;     // sample time of the attack
 };
 
 inline int8_t ioiClassOf(float ioi) {

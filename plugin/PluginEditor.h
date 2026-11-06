@@ -20,10 +20,10 @@ private:
 
     DialogueProcessor& proc;
     juce::LookAndFeel_V4 lnf;
-    Knob patience, interruption, length, memory, fidelity, contrast, scale, sens, gate, low, high, channel;
-    juce::ComboBox grid;
-    juce::Label gridLabel;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> gridAtt;
+    Knob patience, interruption, length, humanize, memory, fidelity, contrast, scale, random, sens, gate, low, high, channel;
+    juce::ComboBox grid, mode;
+    juce::Label gridLabel, modeLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> gridAtt, modeAtt;
     juce::ToggleButton freeze, respond;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAtt, respondAtt;
     juce::TextButton clear;
@@ -32,6 +32,7 @@ private:
     bool hearing = false, answering = false;
     int memSize = 0;
     float level = -120.f, pitch = 0.f;
+    int keyRoot = -1, scaleType = 0, chordRoot = -1, chordType = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DialogueEditor)
 };

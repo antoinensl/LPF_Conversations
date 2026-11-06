@@ -21,13 +21,14 @@ struct HeardEvent {
 struct AnalyzerSettings {
     float sensitivity = 0.5f;  // 0..1, onset detection
     float gateDb = -55.f;      // below this, silence
+    bool bright = false;       // false: instruments (55 Hz-2 kHz). true: birds, voices (100 Hz-10 kHz, fast)
 };
 
 class Analyzer {
 public:
     void prepare(double sampleRate);
     void reset();
-    void setSettings(const AnalyzerSettings& s) { settings_ = s; }
+    void setSettings(const AnalyzerSettings& s);
 
     // Feed mono input. blockStart = absolute sample time of in[0].
     void process(const float* in, int n, int64_t blockStart);
@@ -43,6 +44,10 @@ public:
     float levelDb() const { return levelDb_; }
     float lastPitch() const { return lastF0Midi_; }
     float lastConfidence() const { return lastConf_; }
+
+    // Harmonic colour heard in the audio (works on chords too), normalised to sum 1.
+    // longTerm = false: last ~1 s (chord), true: last ~20 s (key). Returns total weight.
+    float chroma(bool longTerm, float out[12]) const;
 
     int hop() const { return hop_; }
     double sampleRate() const { return sr_; }
@@ -64,6 +69,22 @@ private:
     int hop_ = 128, onsetN_ = 512, yinW_ = 1024, yinFftN_ = 4096;
     int pitchEvery_ = 2, hopCount_ = 0, hopIndex_ = 0;
     int tauMin_ = 20, tauMax_ = 900;
+    // effective values for the current listening mode
+    int wEff_ = 1024, tauMinEff_ = 20, tauMaxEff_ = 900, pitchEveryEff_ = 2;
+    float minIoiSec_ = 0.045f, legatoSemis_ = 0.8f, pitchWaitSec_ = 0.040f, maxMidi_ = 110.f;
+    int legatoFrames_ = 3;
+    bool modeBright_ = false;
+    void applyMode();
+    // chroma
+    void chromaAnalysis();
+    FFT chromaFft_;
+    std::vector<float> chromaWin_, chRe_, chIm_, chMag_;
+    int chromaCount_ = 0;
+    std::vector<int> binPc_;
+    std::vector<float> binW_;
+    int chromaLo_ = 1, chromaHi_ = 1;
+    float chordC_[12] = {}, keyC_[12] = {};
+    float chordW_ = 0.f, keyW_ = 0.f, aChord_ = 0.99f, aKey_ = 0.999f;
 
     std::vector<float> ring_;
     int ringMask_ = 0, writePos_ = 0;

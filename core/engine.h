@@ -22,6 +22,28 @@ struct Params {
     int channel = 1;            // 1..16
     bool freeze = false;        // stop learning (still listens and answers)
     bool respond = true;        // false = listen only
+    bool bright = false;        // listening mode for birds / voices (high, fast, gliding)
+    float randomness = 0.f;     // 0 = only what it learnt .. 1 = many invented notes (in scale / chord)
+    float humanize = 0.f;       // 0 = machine .. 1 = loose timing, reaction delay, phrasing
+};
+
+// What the engine thinks you are playing in.
+struct Harmony {
+    enum Scale { Major, Minor, Dorian, Mixolydian, Phrygian, Lydian, HarmonicMinor,
+                 MajorPenta, MinorPenta, Blues, WholeTone, NumScales };
+    enum Chord { Maj, Min, Dom7, Maj7, Min7, Dim, Sus4, Power, NumChords };
+    int keyRoot = -1;           // pitch class 0..11, -1 = unknown
+    int scale = Major;
+    uint16_t scaleMask = 0;     // bit per pitch class
+    float keyConfidence = 0.f;  // 0..1
+    int chordRoot = -1;
+    int chord = Maj;
+    uint16_t chordMask = 0;
+    float chordConfidence = 0.f;
+    static const char* scaleName(int s);   // French
+    static const char* chordSuffix(int c);
+    static const char* pcName(int pc);     // Do, Ré, ...
+    static const char* pcLetter(int pc);   // C, D, ... (chord symbols)
 };
 
 struct Transport {
@@ -68,9 +90,11 @@ public:
     int eventsNeeded() const;
     double silenceWaitSeconds() const;
     const Analyzer& analyzer() const { return analyzer_; }
+    const Harmony& harmony() const { return harmony_; }
+    void updateHarmony();
 
     // Exposed for tests: generate an answer from the current memory.
-    int generate(int n, GenNote* out);
+    int generate(int n, GenNote* out, int capacity);
 
 private:
     struct Slot {
@@ -88,7 +112,9 @@ private:
     void emit(int64_t blockStart, int n, MidiSink& out);
     float rnd();
     int foldToRange(int p) const;
-    int snapToScale(int p, const float* pcWeight, int dir) const;
+    static int snapToMask(int p, uint16_t mask, int dir);
+    int randomTone(int prev, bool chordTone);
+    float rndSigned() { return rnd() * 2.f - 1.f; }
 
     double sr_ = 44100.0;
     Params p_;
@@ -104,6 +130,8 @@ private:
     uint32_t rng_ = 0x9E3779B9u;
     uint32_t nextId_ = 1;
     int lastChannel_ = 1;
+    Harmony harmony_;
+    int harmonyCountdown_ = 0;
 
     Slot pool_[kPool];
     uint32_t soundId_[128] = {};

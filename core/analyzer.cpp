@@ -19,7 +19,7 @@ void Analyzer::prepare(double sampleRate) {
     tauMax_ = std::min(yinW_ - 2, (int)(sr_ / 55.0));
 
     int ringSize = 1;
-    while (ringSize < 2 * yinW_ + 2 * hop_) ringSize <<= 1;
+    while (ringSize < 2 * yinFftN_) ringSize <<= 1;
     ring_.assign(ringSize, 0.f);
     ringMask_ = ringSize - 1;
 
@@ -38,7 +38,120 @@ void Analyzer::prepare(double sampleRate) {
     cumSq_.assign(2 * yinW_ + 1, 0.f);
     dprime_.assign(yinW_ + 1, 1.f);
     fluxHist_.assign(16, 0.f);
+    chromaFft_.init(yinFftN_);
+    chromaWin_.resize(yinFftN_);
+    for (int i = 0; i < yinFftN_; ++i)
+        chromaWin_[i] = 0.5f - 0.5f * std::cos(2.0 * M_PI * i / yinFftN_);
+    chRe_.assign(yinFftN_, 0.f); chIm_.assign(yinFftN_, 0.f); chMag_.assign(yinFftN_ / 2, 0.f);
+    binPc_.assign(yinFftN_ / 2, -1);
+    binW_.assign(yinFftN_ / 2, 0.f);
+    for (int k = 1; k < yinFftN_ / 2; ++k) {
+        const double f = k * sr_ / yinFftN_;
+        if (f < 80.0) continue;
+        const double m = 69.0 + 12.0 * std::log2(f / 440.0);
+        const double r = std::round(m);
+        binPc_[k] = (((int)r % 12) + 12) % 12;
+        binW_[k] = (float)std::max(0.0, 1.0 - 2.0 * std::fabs(m - r)); // triangle: in tune counts most
+    }
+    applyMode();
     reset();
+}
+
+void Analyzer::setSettings(const AnalyzerSettings& s) {
+    const bool changed = s.bright != settings_.bright;
+    settings_ = s;
+    if (changed) applyMode();
+}
+
+void Analyzer::applyMode() {
+    modeBright_ = settings_.bright;
+    if (!modeBright_) {
+        wEff_ = yinW_;
+        tauMinEff_ = std::max(2, (int)(sr_ / 2000.0));
+        tauMaxEff_ = std::min(yinW_ - 2, (int)(sr_ / 55.0));
+        pitchEveryEff_ = 2;
+        minIoiSec_ = 0.045f; legatoSemis_ = 0.8f; legatoFrames_ = 3;
+        pitchWaitSec_ = 0.040f; maxMidi_ = 110.f;
+    } else {
+        wEff_ = yinW_ / 2;
+        tauMinEff_ = std::max(2, (int)(sr_ / 10000.0));
+        tauMaxEff_ = std::min(wEff_ - 2, (int)(sr_ / 100.0));
+        pitchEveryEff_ = 1;
+        minIoiSec_ = 0.015f; legatoSemis_ = 1.5f; legatoFrames_ = 2;
+        pitchWaitSec_ = 0.020f; maxMidi_ = 136.f;
+    }
+    tauMin_ = tauMinEff_;
+    tauMax_ = tauMaxEff_;
+    const double hz = modeBright_ ? 8000.0 : 5000.0;
+    chromaLo_ = std::max(1, (int)(80.0 * yinFftN_ / sr_));
+    chromaHi_ = std::min(yinFftN_ / 2 - 1, (int)(hz * yinFftN_ / sr_));
+    const double dt = 4.0 * hop_ * pitchEveryEff_ / sr_;
+    aChord_ = (float)std::exp(-dt / 1.0);
+    aKey_ = (float)std::exp(-dt / 20.0);
+}
+
+// Harmonic colour: Hann-windowed spectrum (~90 ms), spectral peaks only, higher partials
+// weighted down so that fundamentals dominate. Runs every 4th pitch frame.
+void Analyzer::chromaAnalysis() {
+    const int N = yinFftN_;
+    for (int i = 0; i < N; ++i) {
+        chRe_[i] = sampleAt(N - i) * chromaWin_[i];
+        chIm_[i] = 0.f;
+    }
+    chromaFft_.transform(chRe_.data(), chIm_.data());
+    float mx = 0.f;
+    for (int k = chromaLo_ - 1; k <= chromaHi_ + 1; ++k) {
+        chMag_[k] = std::sqrt(chRe_[k] * chRe_[k] + chIm_[k] * chIm_[k]);
+        mx = std::max(mx, chMag_[k]);
+    }
+    // spectral peaks (strongest first would be nicer; in frequency order is enough here)
+    struct Peak { float f, m; int pc; float bw; };
+    Peak pk[96];
+    int np = 0;
+    if (mx > 1e-6f) {
+        for (int k = chromaLo_; k <= chromaHi_ && np < 96; ++k) {
+            const float m = chMag_[k];
+            if (m < 0.02f * mx || m <= chMag_[k - 1] || m < chMag_[k + 1]) continue;
+            if (binPc_[k] < 0) continue;
+            // parabolic interpolation of the peak frequency
+            const float a = chMag_[k - 1], c = chMag_[k + 1];
+            const float den = a - 2.f * m + c;
+            const float off = std::fabs(den) > 1e-12f ? std::clamp(0.5f * (a - c) / den, -0.5f, 0.5f) : 0.f;
+            pk[np++] = {(float)((k + off) * sr_ / N), m, binPc_[k], binW_[k]};
+        }
+    }
+    float fr[12] = {};
+    float tot = 0.f;
+    for (int i = 0; i < np; ++i) {
+        float w = pk[i].m * pk[i].bw / (1.f + pk[i].f / 600.f);
+        // a 3rd, 5th, 6th or 7th partial of a stronger lower peak is colour, not a note
+        for (int j = 0; j < i; ++j) {
+            if (pk[j].m < 0.3f * pk[i].m) continue;
+            const float ratio = pk[i].f / pk[j].f;
+            const float n = std::round(ratio);
+            if ((n == 3.f || n == 5.f || n == 6.f || n == 7.f) && std::fabs(ratio - n) < 0.015f * n) {
+                w *= 0.2f;
+                break;
+            }
+        }
+        fr[pk[i].pc] += w; tot += w;
+    }
+    const float w = levelDb_ > settings_.gateDb && tot > 1e-9f ? std::max(0.f, 1.f - 2.f * flatness_) : 0.f;
+    for (int i = 0; i < 12; ++i) {
+        const float v = w > 0.f ? w * fr[i] / tot : 0.f;
+        chordC_[i] = aChord_ * chordC_[i] + v;
+        keyC_[i] = aKey_ * keyC_[i] + v;
+    }
+    chordW_ = aChord_ * chordW_ + w;
+    keyW_ = aKey_ * keyW_ + w;
+}
+
+float Analyzer::chroma(bool longTerm, float out[12]) const {
+    const float* c = longTerm ? keyC_ : chordC_;
+    float sum = 0.f;
+    for (int i = 0; i < 12; ++i) sum += c[i];
+    for (int i = 0; i < 12; ++i) out[i] = sum > 1e-9f ? c[i] / sum : 0.f;
+    return longTerm ? keyW_ : chordW_;
 }
 
 void Analyzer::reset() {
@@ -53,6 +166,9 @@ void Analyzer::reset() {
     levelPos_ = 0; slowDb_ = -120.f; candTime_ = -1;
     noteState_ = Idle; pendCount_ = 0; deviateCount_ = 0;
     lastActive_ = -1000000; numEvents_ = 0;
+    std::fill(chordC_, chordC_ + 12, 0.f);
+    std::fill(keyC_, keyC_ + 12, 0.f);
+    chordW_ = keyW_ = 0.f;
 }
 
 float Analyzer::sampleAt(int back) const {
@@ -119,7 +235,7 @@ void Analyzer::onsetAnalysis(int64_t frameEnd, bool& onset) {
     const float delta = 6.f - 5.2f * s;            // 6 .. 0.8
     const float mult = 1.8f - 0.6f * s;            // 1.8 .. 1.2
     const float thresh = mean * mult + delta;
-    const int64_t minIoi = (int64_t)(0.045 * sr_);
+    const int64_t minIoi = (int64_t)(minIoiSec_ * sr_);
 
     const bool loud = levelDb_ > settings_.gateDb;
     const bool fluxHit = flux > thresh && prevFlux_ <= thresh;
@@ -150,7 +266,7 @@ void Analyzer::onsetAnalysis(int64_t frameEnd, bool& onset) {
 }
 
 void Analyzer::pitchAnalysis(float& midi, float& conf) {
-    const int W = yinW_;
+    const int W = wEff_;
     const int L = W + tauMax_ + 1;        // samples used, newest first
     const int F = yinFftN_;
     for (int i = 0; i < F; ++i) {
@@ -164,6 +280,7 @@ void Analyzer::pitchAnalysis(float& midi, float& conf) {
     if (e1 < 1e-7f * W) { midi = 0.f; conf = 0.f; return; }
 
     yinFft_.transform(xre_.data(), xim_.data());
+
     yinFft_.transform(yre_.data(), yim_.data());
     for (int i = 0; i < F; ++i) {
         // X * conj(Y)
@@ -274,16 +391,17 @@ void Analyzer::analyseFrame(int64_t frameEnd) {
 
     float f0 = 0.f, conf = 0.f;
     bool havePitch = false;
-    if (++hopIndex_ >= pitchEvery_) {
+    if (++hopIndex_ >= pitchEveryEff_) {
         hopIndex_ = 0;
         pitchAnalysis(f0, conf);
         havePitch = true;
+        if (++chromaCount_ >= 4) { chromaCount_ = 0; chromaAnalysis(); }
         lastF0Midi_ = f0; lastConf_ = conf;
     }
-    const bool confident = havePitch && conf > 0.8f && f0 > 20.f && f0 < 110.f;
+    const bool confident = havePitch && conf > 0.8f && f0 > 20.f && f0 < maxMidi_;
     const int64_t onsetTime = (candOnsetTime_ >= 0 ? candOnsetTime_ : frameEnd) - hop_;
-    const int64_t pitchWait = (int64_t)(0.040 * sr_);
-    const int64_t settle = yinW_ / 2;
+    const int64_t pitchWait = (int64_t)(pitchWaitSec_ * sr_);
+    const int64_t settle = wEff_ / 2;
 
     if (onset) {
         if (noteState_ == Pending) commitPending(frameEnd, false, 0.f);
@@ -327,9 +445,9 @@ void Analyzer::analyseFrame(int64_t frameEnd) {
         }
         // legato: a stable new pitch without a new attack
         if (notePitched_ && confident) {
-            if (std::fabs(f0 - notePitch_) > 0.8f) {
+            if (std::fabs(f0 - notePitch_) > legatoSemis_) {
                 if (deviateCount_ > 0 && std::fabs(f0 - deviatePitch_) < 0.5f) {
-                    if (++deviateCount_ >= 3) {
+                    if (++deviateCount_ >= legatoFrames_) {
                         endNote(deviateStart_);
                         startPending(deviateStart_);
                         pendPeakDb_ = levelDb_;
@@ -337,7 +455,7 @@ void Analyzer::analyseFrame(int64_t frameEnd) {
                     }
                 } else {
                     deviateCount_ = 1; deviatePitch_ = f0;
-                    deviateStart_ = frameEnd - hop_ * pitchEvery_;
+                    deviateStart_ = frameEnd - hop_ * pitchEveryEff_;
                 }
             } else {
                 deviateCount_ = 0;

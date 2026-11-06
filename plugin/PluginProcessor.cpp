@@ -33,6 +33,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DialogueProcessor::createLay
     p.push_back(std::make_unique<AudioParameterInt>(ParameterID{"channel", 1}, u8("Canal MIDI"), 1, 16, 1));
     p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"freeze", 1}, u8("Figer la mémoire"), false));
     p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"respond", 1}, u8("Répondre"), true));
+    p.push_back(std::make_unique<AudioParameterChoice>(
+        ParameterID{"mode", 1}, u8("Écoute"), StringArray{"Instrument", "Bright"}, 0));
+    p.push_back(pct("random", u8("Hasard"), 0.2f));
+    p.push_back(pct("humanize", u8("Humanisation"), 0.3f));
     return {p.begin(), p.end()};
 }
 
@@ -56,6 +60,9 @@ DialogueProcessor::DialogueProcessor()
     pChannel = apvts.getRawParameterValue("channel");
     pFreeze = apvts.getRawParameterValue("freeze");
     pRespond = apvts.getRawParameterValue("respond");
+    pMode = apvts.getRawParameterValue("mode");
+    pRandom = apvts.getRawParameterValue("random");
+    pHumanize = apvts.getRawParameterValue("humanize");
 }
 
 bool DialogueProcessor::isBusesLayoutSupported(const BusesLayout& l) const {
@@ -87,6 +94,9 @@ lpfd::Params DialogueProcessor::readParams() const {
     p.channel = juce::roundToInt(pChannel->load());
     p.freeze = pFreeze->load() > 0.5f;
     p.respond = pRespond->load() > 0.5f;
+    p.bright = pMode->load() > 0.5f;
+    p.randomness = pRandom->load();
+    p.humanize = pHumanize->load();
     return p;
 }
 
@@ -147,6 +157,11 @@ void DialogueProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     uiHearing.store(engine.hearing());
     uiAnswering.store(engine.answering());
     uiLevelDb.store(engine.analyzer().levelDb());
+    {
+        const auto& h = engine.harmony();
+        uiKeyRoot.store(h.keyRoot); uiScale.store(h.scale);
+        uiChordRoot.store(h.chordRoot); uiChord.store(h.chord);
+    }
     uiPitch.store(engine.analyzer().lastConfidence() > 0.8f ? engine.analyzer().lastPitch() : 0.f);
 }
 
