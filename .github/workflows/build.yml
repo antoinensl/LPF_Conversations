@@ -1,0 +1,70 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macOS
+          - os: windows-latest
+            name: Windows
+          - os: ubuntu-22.04
+            name: Linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxext-dev libfreetype-dev libfontconfig1-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          ART=build/LPFDialogue_artefacts/Release
+          OUT=LPF-Dialogue-${{ matrix.name }}
+          mkdir -p "$OUT"
+          cp -R "$ART/VST3/LPF Dialogue.vst3" "$OUT/"
+          if [ -d "$ART/AU" ]; then cp -R "$ART/AU/LPF Dialogue.component" "$OUT/"; fi
+          if [ -d "$ART/Standalone/LPF Dialogue.app" ]; then cp -R "$ART/Standalone/LPF Dialogue.app" "$OUT/";
+          elif [ -f "$ART/Standalone/LPF Dialogue.exe" ]; then cp "$ART/Standalone/LPF Dialogue.exe" "$OUT/";
+          else cp "$ART/Standalone/LPF Dialogue" "$OUT/"; fi
+          CLI=$(find build -maxdepth 3 -type f \( -name lpf_dialogue_cli -o -name lpf_dialogue_cli.exe \) | head -1)
+          cp "$CLI" "$OUT/"
+          cp README.md "$OUT/"
+          if [ "$RUNNER_OS" = "Windows" ]; then 7z a "$OUT.zip" "$OUT" > /dev/null; else zip -qry "$OUT.zip" "$OUT"; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LPF-Dialogue-${{ matrix.name }}
+          path: LPF-Dialogue-${{ matrix.name }}.zip
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LPF-Dialogue-${{ matrix.name }}.zip

@@ -1,0 +1,333 @@
+#include "engine.h"
+#include <algorithm>
+#include <climits>
+#include <cmath>
+
+namespace lpfd {
+
+void Engine::prepare(double sampleRate) {
+    sr_ = sampleRate;
+    analyzer_.prepare(sampleRate);
+    reset();
+}
+
+void Engine::reset() {
+    analyzer_.reset();
+    memory_.clear();
+    recent_.clear();
+    lastStartTime_ = -1;
+    now_ = 0;
+    newEvents_ = 0;
+    answering_ = false;
+    for (auto& s : pool_) s.used = false;
+    std::fill(soundId_, soundId_ + 128, 0u);
+}
+
+void Engine::setParams(const Params& p) {
+    p_ = p;
+    p_.patience = std::clamp(p_.patience, 0.f, 1.f);
+    p_.interruption = std::clamp(p_.interruption, 0.f, 1.f);
+    p_.length = std::clamp(p_.length, 0.1f, 4.f);
+    p_.memory = std::clamp(p_.memory, 0.f, 1.f);
+    p_.fidelity = std::clamp(p_.fidelity, 0.f, 1.f);
+    p_.contrast = std::clamp(p_.contrast, 0.f, 1.f);
+    p_.scaleLock = std::clamp(p_.scaleLock, 0.f, 1.f);
+    p_.rangeLow = std::clamp(p_.rangeLow, 0, 127);
+    p_.rangeHigh = std::clamp(p_.rangeHigh, 0, 127);
+    p_.channel = std::clamp(p_.channel, 1, 16);
+    p_.grid = std::clamp(p_.grid, 0, 3);
+}
+
+float Engine::rnd() {
+    uint32_t x = rng_;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    rng_ = x;
+    return (x >> 8) * (1.f / 16777216.f);
+}
+
+int Engine::eventsNeeded() const {
+    if (p_.patience >= 0.98f) return INT_MAX;
+    return 1 + (int)std::lround(p_.patience * p_.patience * 15.f);
+}
+
+double Engine::silenceWaitSeconds() const {
+    return 0.08 + 1.92 * std::pow((double)p_.patience, 1.5);
+}
+
+int Engine::foldToRange(int p) const {
+    const int lo = std::min(p_.rangeLow, p_.rangeHigh);
+    const int hi = std::max(p_.rangeLow, p_.rangeHigh);
+    if (hi - lo < 12) return std::clamp(p, lo, hi);
+    while (p > hi) p -= 12;
+    while (p < lo) p += 12;
+    return p;
+}
+
+int Engine::snapToScale(int p, const float* w, int dir) const {
+    const int s = dir >= 0 ? 1 : -1;
+    for (int d = 0; d <= 6; ++d) {
+        int a = p + d * s, b = p - d * s;
+        if (w[((a % 12) + 12) % 12] > 0.f) return a;
+        if (w[((b % 12) + 12) % 12] > 0.f) return b;
+    }
+    return p;
+}
+
+int Engine::generate(int n, GenNote* out) {
+    if (memory_.empty()) return 0;
+    n = std::clamp(n, 1, kMaxAnswer);
+    const int64_t cnt = memory_.count();
+    const int64_t window = (int64_t)std::lround(8.0 * std::pow(2.0, p_.memory * 9.0));
+    const int64_t base = std::max(memory_.first(), cnt - window);
+
+    // pitch classes heard (for scale lock)
+    float pcw[12] = {};
+    float pcMax = 0.f;
+    for (int64_t s = base; s < cnt; ++s) {
+        const MemEvent& e = memory_.at(s);
+        if (!e.pitched) continue;
+        int pc = (((int)std::lround(e.pitch)) % 12 + 12) % 12;
+        pcw[pc] += e.velocity * (e.dur > 0.f ? std::min(e.dur, 1.f) : 0.25f) + 0.01f;
+    }
+    for (float w : pcw) pcMax = std::max(pcMax, w);
+    for (float& w : pcw) if (w < 0.15f * pcMax) w = 0.f;
+    const bool haveScale = pcMax > 0.f;
+
+    // context = what was just played
+    int8_t ctxI[16], ctxR[16];
+    int ctxLen = 0;
+    float meanPitch = 0.f, meanIoi = 0.f;
+    int nIoi = 0;
+    for (int64_t s = recent_.first(); s < recent_.count(); ++s) {
+        const MemEvent& e = recent_.at(s);
+        ctxI[ctxLen] = e.interval; ctxR[ctxLen] = e.ioiClass; ++ctxLen;
+        meanPitch += e.pitch;
+        if (s > recent_.first() && e.ioi < 3.f) { meanIoi += e.ioi; ++nIoi; }
+    }
+    int prev;
+    if (ctxLen > 0) {
+        meanPitch /= ctxLen;
+        prev = (int)std::lround(recent_.last().pitch);
+    } else {
+        meanPitch = memory_.last().pitch;
+        prev = (int)std::lround(meanPitch);
+    }
+    meanIoi = nIoi ? meanIoi / nIoi : 0.3f;
+
+    const float c = p_.contrast;
+    const float center = 0.5f * (p_.rangeLow + p_.rangeHigh);
+    if (rnd() < c * 0.8f) prev += meanPitch < center ? 12 : -12;
+    const float target = meanIoi < 0.2f ? 2.f : (meanIoi > 0.6f ? 0.5f : 1.f);
+    const float factor = 1.f + (target - 1.f) * c;
+
+    const int maxOrder = (int)std::lround(p_.fidelity * 4.f);
+    float t = 0.f;
+    for (int i = 0; i < n; ++i) {
+        int cap = maxOrder;
+        if (rnd() < (1.f - p_.fidelity) * 0.25f) cap = 0;
+        int64_t pick = -1;
+        for (int order = std::min(cap, ctxLen); order >= 1 && pick < 0; --order) {
+            int matches = 0;
+            for (int64_t s = base + order; s < cnt; ++s) {
+                bool ok = true;
+                for (int j = 1; j <= order && ok; ++j) {
+                    const MemEvent& e = memory_.at(s - j);
+                    ok = e.interval == ctxI[ctxLen - j] &&
+                         std::abs(e.ioiClass - ctxR[ctxLen - j]) <= 1;
+                }
+                if (ok) {
+                    ++matches;
+                    if (rnd() * matches < 1.f) pick = s;
+                }
+            }
+        }
+        if (pick < 0) pick = base + std::min<int64_t>(cnt - base - 1, (int64_t)(rnd() * (cnt - base)));
+        const MemEvent& e = memory_.at(pick);
+
+        int interval = e.interval;
+        if (rnd() < c * 0.6f) interval = -interval;
+        if (i > 0) t += std::clamp(e.ioi * factor, 0.03f, 2.f);
+        int pitch = foldToRange(prev + interval);
+        if (haveScale && rnd() < p_.scaleLock)
+            pitch = foldToRange(snapToScale(pitch, pcw, interval));
+        float dur = e.dur > 0.f ? e.dur : std::min(e.ioi, 0.3f);
+        dur = std::clamp(dur * factor, 0.03f, 4.f);
+        float vel = e.velocity;
+        vel = vel + ((1.05f - vel) - vel) * c * 0.7f;
+        out[i].time = t;
+        out[i].dur = dur;
+        out[i].pitch = std::clamp(pitch, 0, 127);
+        out[i].velocity = std::clamp((int)std::lround(1.f + std::clamp(vel, 0.f, 1.f) * 126.f), 1, 127);
+        prev = out[i].pitch;
+
+        if (ctxLen == 16) {
+            for (int k = 1; k < 16; ++k) { ctxI[k - 1] = ctxI[k]; ctxR[k - 1] = ctxR[k]; }
+            --ctxLen;
+        }
+        ctxI[ctxLen] = (int8_t)std::clamp(interval, -24, 24);
+        ctxR[ctxLen] = e.ioiClass;
+        ++ctxLen;
+    }
+    return n;
+}
+
+int64_t Engine::snapToGrid(int64_t t, const Transport& tr, int64_t blockStart) const {
+    if (p_.grid == 0 || !tr.valid || !tr.playing || tr.bpm <= 0.0) return t;
+    const double spb = sr_ * 60.0 / tr.bpm;
+    const double step = p_.grid == 1 ? 1.0 : (p_.grid == 2 ? 0.5 : 0.25);
+    const double ppq = tr.ppqAtBlockStart + (double)(t - blockStart) / spb;
+    const double next = std::ceil(ppq / step - 1e-6) * step;
+    return blockStart + (int64_t)std::llround((next - tr.ppqAtBlockStart) * spb);
+}
+
+void Engine::schedule(int64_t t, uint32_t id, int pitch, int vel, bool on) {
+    for (auto& s : pool_) {
+        if (!s.used) {
+            s.used = true; s.time = t; s.id = id;
+            s.pitch = (uint8_t)pitch; s.vel = (uint8_t)vel; s.on = on;
+            return;
+        }
+    }
+}
+
+void Engine::trigger(int64_t t, const Transport& tr, int64_t blockStart) {
+    const int n = std::clamp((int)std::lround(newEvents_ * p_.length), 1, kMaxAnswer);
+    newEvents_ = 0;
+    if (!p_.respond) return;
+    GenNote notes[kMaxAnswer];
+    const int k = generate(n, notes);
+    int freeSlots = 0;
+    for (auto& s : pool_) if (!s.used) ++freeSlots;
+    for (int i = 0; i < k && freeSlots >= 2; ++i, freeSlots -= 2) {
+        uint32_t id = nextId_++;
+        if (id == 0) id = nextId_++;
+        int64_t on = snapToGrid(t + (int64_t)(notes[i].time * sr_), tr, blockStart);
+        int64_t off = on + std::max<int64_t>(1, (int64_t)(notes[i].dur * sr_));
+        schedule(on, id, notes[i].pitch, notes[i].velocity, true);
+        schedule(off, id, notes[i].pitch, 0, false);
+        answerEnd_ = std::max(answerEnd_, off);
+    }
+    if (k > 0) answering_ = true;
+}
+
+void Engine::yieldAt(int64_t t) {
+    for (auto& s : pool_) {
+        if (!s.used) continue;
+        if (s.on && s.time >= t) s.used = false;
+        else if (!s.on && s.time > t) s.time = t;
+    }
+}
+
+void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStart) {
+    if (e.type == HeardEvent::End) {
+        auto close = [&](auto& ring) {
+            if (!ring.empty() && ring.last().dur <= 0.f)
+                ring.last().dur = std::max(0.01f, (float)((e.time - lastStartTime_) / sr_));
+        };
+        if (lastStartTime_ >= 0) {
+            close(recent_);
+            if (!p_.freeze) close(memory_);
+        }
+        return;
+    }
+
+    MemEvent m;
+    m.pitch = e.pitch;
+    m.pitched = e.pitched;
+    m.velocity = e.velocity;
+    m.ioi = lastStartTime_ < 0 ? 0.25f
+                               : std::min(4.f, (float)((e.time - lastStartTime_) / sr_));
+    m.ioiClass = ioiClassOf(m.ioi);
+    m.interval = recent_.empty()
+                     ? 0
+                     : (int8_t)std::clamp((int)std::lround(e.pitch - recent_.last().pitch), -24, 24);
+    auto legato = [&](auto& ring) {
+        if (!ring.empty() && ring.last().dur <= 0.f) ring.last().dur = std::max(0.01f, m.ioi);
+    };
+    legato(recent_);
+    recent_.add(m);
+    if (!p_.freeze) { legato(memory_); memory_.add(m); }
+    lastStartTime_ = e.time;
+    ++newEvents_;
+
+    if (answering_ && p_.interruption < 0.5f) yieldAt(e.commitTime);
+
+    if (newEvents_ >= eventsNeeded() &&
+        (p_.interruption >= 1.f || rnd() < p_.interruption))
+        trigger(std::max(e.commitTime, blockStart), tr, blockStart);
+}
+
+void Engine::emit(int64_t blockStart, int n, MidiSink& out) {
+    const int64_t end = blockStart + n;
+    int k = 0;
+    for (auto& s : pool_) {
+        if (s.used && s.time < end) { emitBuf_[k++] = s; s.used = false; }
+    }
+    // sort by time, note-offs first at equal time
+    for (int i = 1; i < k; ++i) {
+        Slot x = emitBuf_[i];
+        int j = i - 1;
+        while (j >= 0 && (emitBuf_[j].time > x.time ||
+                          (emitBuf_[j].time == x.time && emitBuf_[j].on && !x.on))) {
+            emitBuf_[j + 1] = emitBuf_[j];
+            --j;
+        }
+        emitBuf_[j + 1] = x;
+    }
+    const int ch = p_.channel;
+    for (int i = 0; i < k; ++i) {
+        const Slot& s = emitBuf_[i];
+        const int off = (int)std::clamp<int64_t>(s.time - blockStart, 0, n - 1);
+        if (s.on) {
+            if (soundId_[s.pitch] != 0) out.noteOff(off, ch, s.pitch);
+            out.noteOn(off, ch, s.pitch, s.vel);
+            soundId_[s.pitch] = s.id;
+        } else if (soundId_[s.pitch] == s.id) {
+            out.noteOff(off, ch, s.pitch);
+            soundId_[s.pitch] = 0;
+        }
+    }
+    bool any = false;
+    for (auto& s : pool_) if (s.used) { any = true; break; }
+    if (!any) for (uint32_t id : soundId_) if (id) { any = true; break; }
+    answering_ = any;
+}
+
+void Engine::allNotesOff(int sampleOffset, MidiSink& out) {
+    for (int p = 0; p < 128; ++p)
+        if (soundId_[p]) { out.noteOff(sampleOffset, lastChannel_, p); soundId_[p] = 0; }
+    for (auto& s : pool_) s.used = false;
+    answering_ = false;
+}
+
+void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out) {
+    if (n <= 0) return;
+    if (p_.channel != lastChannel_) {
+        allNotesOff(0, out);
+        lastChannel_ = p_.channel;
+    }
+    if (clearRequested_) {
+        clearRequested_ = false;
+        memory_.clear(); recent_.clear();
+        lastStartTime_ = -1; newEvents_ = 0;
+    }
+    AnalyzerSettings as;
+    as.sensitivity = p_.sensitivity;
+    as.gateDb = p_.gateDb;
+    analyzer_.setSettings(as);
+
+    const int64_t blockStart = now_;
+    analyzer_.process(in, n, blockStart);
+    for (int i = 0; i < analyzer_.numEvents(); ++i) onHeard(analyzer_.event(i), tr, blockStart);
+    analyzer_.clearEvents();
+
+    if (newEvents_ > 0 && !analyzer_.isActive()) {
+        const int64_t tSil = analyzer_.lastActiveTime() + (int64_t)(silenceWaitSeconds() * sr_);
+        if (tSil < blockStart + n) trigger(std::max(tSil, blockStart), tr, blockStart);
+    }
+
+    emit(blockStart, n, out);
+    now_ += n;
+}
+
+} // namespace lpfd
