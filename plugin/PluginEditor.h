@@ -21,11 +21,11 @@ private:
     DialogueProcessor& proc;
     juce::LookAndFeel_V4 lnf;
     Knob patience, interruption, length, humanize, memory, fidelity, contrast, scale, random, sens, gate, low, high, channel;
-    juce::ComboBox grid, mode;
-    juce::Label gridLabel, modeLabel;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> gridAtt, modeAtt;
-    juce::ToggleButton freeze, respond;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAtt, respondAtt;
+    juce::ComboBox grid, mode, source, midiIn;
+    juce::Label gridLabel, modeLabel, sourceLabel, midiInLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> gridAtt, modeAtt, sourceAtt, midiInAtt;
+    juce::ToggleButton freeze, respond, thru;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAtt, respondAtt, thruAtt;
     juce::TextButton clear;
     juce::TooltipWindow tooltips{this, 400};
 

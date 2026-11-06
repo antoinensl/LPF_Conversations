@@ -25,6 +25,8 @@ struct Params {
     bool bright = false;        // listening mode for birds / voices (high, fast, gliding)
     float randomness = 0.f;     // 0 = only what it learnt .. 1 = many invented notes (in scale / chord)
     float humanize = 0.f;       // 0 = machine .. 1 = loose timing, reaction delay, phrasing
+    int source = 0;             // what it listens to: 0 = audio, 1 = MIDI, 2 = both
+    int midiInChannel = 0;      // 0 = any channel, else 1..16
 };
 
 // What the engine thinks you are playing in.
@@ -79,13 +81,15 @@ public:
     void requestClearMemory() { clearRequested_ = true; }
     void setSeed(uint32_t s) { rng_ = s ? s : 1u; }
 
+    // Incoming MIDI for the next process() call (offset within that block). Real-time safe.
+    void addMidiInput(int sampleOffset, bool noteOn, int channel, int pitch, int velocity);
     void process(const float* monoIn, int n, const Transport& tr, MidiSink& out);
     void allNotesOff(int sampleOffset, MidiSink& out);
 
     // For UI / tests
     int memorySize() const { return memory_.size(); }
     int64_t now() const { return now_; }
-    bool hearing() const { return analyzer_.isActive(); }
+    bool hearing() const { return (p_.source != 1 && analyzer_.isActive()) || (p_.source != 0 && heldCount_ > 0); }
     bool answering() const { return answering_; }
     int eventsNeeded() const;
     double silenceWaitSeconds() const;
@@ -104,7 +108,9 @@ private:
         bool on = false, used = false;
     };
 
+    struct MidiIn { int offset; bool on; uint8_t ch, pitch, vel; };
     void onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStart);
+    void onMidi(const MidiIn& m, const Transport& tr, int64_t blockStart);
     void trigger(int64_t t, const Transport& tr, int64_t blockStart);
     void yieldAt(int64_t t);
     int64_t snapToGrid(int64_t t, const Transport& tr, int64_t blockStart) const;
@@ -132,6 +138,19 @@ private:
     int lastChannel_ = 1;
     Harmony harmony_;
     int harmonyCountdown_ = 0;
+
+    // MIDI input
+    MidiIn midiQ_[1024];
+    int midiQn_ = 0;
+    bool held_[128] = {};
+    float heldVel_[128] = {};
+    int heldCount_ = 0;
+    bool echoHeld_[128] = {};
+    int64_t lastEmitOn_[128] = {};
+    int64_t midiLastActive_ = -1000000;
+    int64_t lastMidiStart_ = -1000000;
+    int lastMidiEventPitch_ = -1;
+    float midiKeyHist_[12] = {}, midiChordC_[12] = {};
 
     Slot pool_[kPool];
     uint32_t soundId_[128] = {};

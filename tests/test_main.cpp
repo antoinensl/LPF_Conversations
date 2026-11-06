@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <new>
+#include <algorithm>
 #include <random>
 #include <string>
 #include <vector>
@@ -704,6 +705,150 @@ static void testRandomAndHumanize() {
     CHECK(v1 > v0 + 2.0, "humanize should spread velocities (%.1f vs %.1f)", v1, v0);
 }
 
+// ---- v0.3: MIDI input ----
+struct MIn { double t; bool on; int ch, pitch, vel; };
+
+static std::vector<MIn> midiPhrase(double t0, const std::vector<int>& pitches, double step, double dur,
+                                   int ch = 1, int vel = 90) {
+    std::vector<MIn> v;
+    for (size_t i = 0; i < pitches.size(); ++i) {
+        v.push_back({t0 + i * step, true, ch, pitches[i], vel});
+        v.push_back({t0 + i * step + dur, false, ch, pitches[i], 0});
+    }
+    return v;
+}
+
+// Runs the engine with MIDI input (and optional audio). feedback: the engine's own output
+// is sent back to its input one block later (a MIDI loop).
+static Capture runMidi(Engine& e, std::vector<MIn> in, double seconds, bool feedback = false,
+                       const std::vector<float>* audio = nullptr, bool countAllocs = false) {
+    std::sort(in.begin(), in.end(), [](const MIn& a, const MIn& b) { return a.t < b.t; });
+    Capture cap;
+    const int B = 256;
+    const int64_t total = (int64_t)(seconds * SR);
+    std::vector<float> zeros(B, 0.f);
+    size_t next = 0;
+    std::vector<Midi> loop;
+    for (int64_t pos = 0; pos < total; pos += B) {
+        while (next < in.size() && (int64_t)(in[next].t * SR) < pos + B) {
+            const MIn& m = in[next++];
+            e.addMidiInput((int)std::max<int64_t>(0, (int64_t)(m.t * SR) - pos), m.on, m.ch, m.pitch, m.vel);
+        }
+        for (auto& m : loop) e.addMidiInput((int)(m.t - (pos - B)), m.on, m.ch, m.pitch, m.vel);
+        loop.clear();
+        const size_t before = cap.ev.size();
+        cap.base = pos;
+        const float* a = audio && pos + B <= (int64_t)audio->size() ? audio->data() + pos : zeros.data();
+        if (countAllocs) g_countAllocs = true;
+        e.process(a, B, Transport{}, cap);
+        g_countAllocs = false;
+        if (feedback) loop.assign(cap.ev.begin() + (long)before, cap.ev.end());
+    }
+    return cap;
+}
+
+static void testMidiInput() {
+    std::printf("[MIDI input]\n");
+    {
+        Params p; p.source = 1; p.patience = 0.f; p.interruption = 1.f;
+        Engine e = makeEngine(p);
+        auto in = midiPhrase(0.2, {60, 64, 67, 72, 67, 64}, 0.4, 0.3);
+        auto cap = runMidi(e, in, 6.0);
+        auto o = ons(cap);
+        double worst = 0;
+        for (auto& m : in) {
+            if (!m.on) continue;
+            double best = 1e9;
+            for (auto& x : o) { double d = x.t / SR - m.t; if (d >= -1e-9 && d < best) best = d; }
+            worst = std::max(worst, best);
+        }
+        std::printf("  reflex on MIDI: %zu answers for 6 notes, worst delay %.2f ms\n", o.size(), worst * 1000);
+        CHECK(o.size() == 6, "MIDI reflex: %zu answers", o.size());
+        CHECK(worst < 0.001, "MIDI reflex delay %.2f ms", worst * 1000);
+        std::string why;
+        CHECK(balanced(cap, why), "MIDI reflex: %s", why.c_str());
+    }
+    {
+        // held chord + scale run
+        Params p; p.source = 1; p.respond = false;
+        Engine e = makeEngine(p);
+        auto in = midiPhrase(0.1, {62, 64, 65, 67, 69, 71, 72, 74, 72, 69, 65, 62}, 0.2, 0.18);
+        for (int n : {48, 52, 55, 58}) { in.push_back({3.0, true, 1, n, 80}); in.push_back({5.5, false, 1, n, 0}); }
+        Capture dummy;
+        runMidi(e, in, 4.5);
+        e.updateHarmony();
+        const Harmony& h = e.harmony();
+        std::printf("  held C E G Bb -> %s, scale %s\n", chordName(h).c_str(), keyName(h).c_str());
+        CHECK(h.chordRoot == 0 && h.chord == Harmony::Dom7, "held chord detected as %s", chordName(h).c_str());
+        CHECK((h.scaleMask & 0xFFF) != 0, "no scale");
+        CHECK(e.memorySize() == 13, "memory %d events (12 notes + 1 chord expected)", e.memorySize());
+    }
+    {
+        // a MIDI loop must not make it talk to itself
+        Params p; p.source = 1; p.patience = 0.2f; p.interruption = 1.f; p.length = 2.f;
+        Engine e = makeEngine(p);
+        auto in = midiPhrase(0.2, {60, 62, 64, 65, 67}, 0.25, 0.2);
+        auto cap = runMidi(e, in, 10.0, true);
+        std::printf("  MIDI loop: %d notes in memory for 5 played, %zu answer notes\n", e.memorySize(), ons(cap).size());
+        CHECK(e.memorySize() == 5, "loop: memory grew to %d", e.memorySize());
+        CHECK(ons(cap).size() < 40, "loop: %zu notes, it is answering itself", ons(cap).size());
+    }
+    {
+        // input channel filter
+        Params p; p.source = 1; p.midiInChannel = 2; p.respond = false;
+        Engine e = makeEngine(p);
+        auto in = midiPhrase(0.2, {60, 62, 64}, 0.25, 0.2, 1);
+        auto in2 = midiPhrase(1.2, {67, 69}, 0.25, 0.2, 2);
+        in.insert(in.end(), in2.begin(), in2.end());
+        runMidi(e, in, 3.0);
+        CHECK(e.memorySize() == 2, "channel filter: %d events (want 2)", e.memorySize());
+    }
+    {
+        // audio only ignores MIDI; both hears both
+        std::vector<float> sig((size_t)(SR * 4.0), 0.f);
+        for (auto& n : melody(0.2, 4, 0.3, 0.25, {57, 60, 62, 64})) addTone(sig, n);
+        auto in = midiPhrase(2.2, {72, 74, 76}, 0.3, 0.25);
+        for (int src : {0, 2}) {
+            Params p; p.source = src; p.respond = false;
+            Engine e = makeEngine(p);
+            runMidi(e, in, 4.0, false, &sig);
+            CHECK(e.memorySize() == (src == 0 ? 4 : 7), "source %d: %d events", src, e.memorySize());
+        }
+    }
+    {
+        // MIDI only: listen-mode waits for the keys to be released
+        Params p; p.source = 1; p.patience = 1.f; p.interruption = 0.f;
+        Engine e = makeEngine(p);
+        std::vector<MIn> in = midiPhrase(0.2, {60, 63, 67}, 0.3, 0.25);
+        in.push_back({1.2, true, 1, 48, 70});
+        in.push_back({3.0, false, 1, 48, 0});      // a long bass note held until 3 s
+        auto o = ons(runMidi(e, in, 8.0));
+        CHECK(!o.empty() && o[0].t / SR > 3.0 + e.silenceWaitSeconds() - 0.05,
+              "answered at %.2f s while a key was held", o.empty() ? 0.0 : o[0].t / SR);
+    }
+    {
+        // allocation-free with MIDI + fuzz
+        std::mt19937 rng(11);
+        std::uniform_real_distribution<float> u(0.f, 1.f);
+        std::vector<MIn> in;
+        for (int i = 0; i < 400; ++i) {
+            double t = u(rng) * 9.0;
+            int pch = 20 + (int)(u(rng) * 90);
+            in.push_back({t, true, 1 + (int)(u(rng) * 3), pch, (int)(u(rng) * 127)});
+            in.push_back({t + u(rng) * 0.5, false, 1 + (int)(u(rng) * 3), pch, 0});
+        }
+        Params p; p.source = 2; p.patience = 0.3f; p.interruption = 0.6f; p.randomness = 0.5f; p.humanize = 0.5f;
+        Engine e = makeEngine(p);
+        g_allocs = 0;
+        auto cap = runMidi(e, in, 16.0, true, nullptr, true);
+        std::string why;
+        CHECK(balanced(cap, why), "MIDI fuzz: %s", why.c_str());
+#ifdef LPFD_ALLOC_CHECK
+        CHECK(g_allocs == 0, "MIDI fuzz: %ld allocations", (long)g_allocs);
+#endif
+    }
+}
+
 int main() {
     testPitchAccuracy();
     testMelodyAndRepeats();
@@ -720,6 +865,7 @@ int main() {
     testBright();
     testHarmony();
     testRandomAndHumanize();
+    testMidiInput();
     testNoAllocAndFuzz();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

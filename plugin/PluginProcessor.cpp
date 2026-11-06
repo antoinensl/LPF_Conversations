@@ -37,6 +37,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout DialogueProcessor::createLay
         ParameterID{"mode", 1}, u8("Écoute"), StringArray{"Instrument", "Bright"}, 0));
     p.push_back(pct("random", u8("Hasard"), 0.2f));
     p.push_back(pct("humanize", u8("Humanisation"), 0.3f));
+    p.push_back(std::make_unique<AudioParameterChoice>(
+        ParameterID{"source", 1}, u8("Source"), StringArray{"Audio", "MIDI", "Audio + MIDI"}, 0));
+    {
+        StringArray ch{u8("Tous")};
+        for (int i = 1; i <= 16; ++i) ch.add(String(i));
+        p.push_back(std::make_unique<AudioParameterChoice>(ParameterID{"midiin", 1}, u8("Canal d'entrée"), ch, 0));
+    }
+    p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"thru", 1}, u8("MIDI thru"), false));
     return {p.begin(), p.end()};
 }
 
@@ -63,6 +71,9 @@ DialogueProcessor::DialogueProcessor()
     pMode = apvts.getRawParameterValue("mode");
     pRandom = apvts.getRawParameterValue("random");
     pHumanize = apvts.getRawParameterValue("humanize");
+    pSource = apvts.getRawParameterValue("source");
+    pMidiIn = apvts.getRawParameterValue("midiin");
+    pThru = apvts.getRawParameterValue("thru");
 }
 
 bool DialogueProcessor::isBusesLayoutSupported(const BusesLayout& l) const {
@@ -75,6 +86,9 @@ void DialogueProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     engine.prepare(sampleRate);
     engine.setSeed((uint32_t)juce::Time::getMillisecondCounter() | 1u);
     mono.assign((size_t)juce::jmax(samplesPerBlock, 32), 0.f);
+    inNotes.clear();
+    inNotes.reserve(2048);
+    thruBuf.ensureSize(16384);
 }
 
 lpfd::Params DialogueProcessor::readParams() const {
@@ -97,6 +111,8 @@ lpfd::Params DialogueProcessor::readParams() const {
     p.bright = pMode->load() > 0.5f;
     p.randomness = pRandom->load();
     p.humanize = pHumanize->load();
+    p.source = juce::roundToInt(pSource->load());
+    p.midiInChannel = juce::roundToInt(pMidiIn->load());
     return p;
 }
 
@@ -116,6 +132,17 @@ struct JuceSink : lpfd::MidiSink {
 
 void DialogueProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     juce::ScopedNoDenormals noDenormals;
+    // take what came in before the buffer is reused for our answers
+    inNotes.clear();
+    for (const auto m : midi) {
+        const auto msg = m.getMessage();
+        if ((msg.isNoteOn() || msg.isNoteOff()) && inNotes.size() < inNotes.capacity())
+            inNotes.push_back({m.samplePosition, msg.isNoteOn(), msg.getChannel(), msg.getNoteNumber(),
+                               (int)msg.getVelocity()});
+    }
+    const bool thru = pThru->load() > 0.5f;
+    thruBuf.clear();
+    if (thru) thruBuf.addEvents(midi, 0, -1, 0);
     midi.clear();
     wasBypassed = false;
     engine.setParams(readParams());
@@ -149,8 +176,12 @@ void DialogueProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         lpfd::Transport t2 = tr;
         if (tr.valid && start > 0) t2.ppqAtBlockStart += start * tr.bpm / (60.0 * getSampleRate());
         sink.offset = start;
+        for (const auto& e : inNotes)
+            if (e.pos >= start && e.pos < start + n)
+                engine.addMidiInput(e.pos - start, e.on, e.ch, e.pitch, e.vel);
         engine.process(mono.data(), n, t2, sink);
     }
+    if (thru) midi.addEvents(thruBuf, 0, -1, 0);
     // audio passes through untouched
 
     uiMemory.store(engine.memorySize());
@@ -166,7 +197,8 @@ void DialogueProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 }
 
 void DialogueProcessor::processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer& midi) {
-    midi.clear();
+    // bypassed: let the incoming MIDI through, silence our answers once
+    if (pThru->load() <= 0.5f) midi.clear();
     if (!wasBypassed) {
         JuceSink sink(midi);
         engine.allNotesOff(0, sink);

@@ -28,7 +28,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return JucePlugin_Name; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
@@ -69,6 +69,11 @@ private:
     std::atomic<float>* pChannel = nullptr;  std::atomic<float>* pFreeze = nullptr;
     std::atomic<float>* pRespond = nullptr;  std::atomic<float>* pMode = nullptr;
     std::atomic<float>* pRandom = nullptr;   std::atomic<float>* pHumanize = nullptr;
+    std::atomic<float>* pSource = nullptr;   std::atomic<float>* pMidiIn = nullptr;
+    std::atomic<float>* pThru = nullptr;
+    struct InNote { int pos; bool on; int ch, pitch, vel; };
+    std::vector<InNote> inNotes;   // preallocated
+    juce::MidiBuffer thruBuf;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DialogueProcessor)
 };

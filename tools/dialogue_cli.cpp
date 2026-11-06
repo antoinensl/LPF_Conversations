@@ -1,7 +1,7 @@
 // LPF Dialogue — offline tool: play a WAV into the engine, get its answers as a MIDI file
 // (and optionally a WAV with your audio on the left and a simple synth answer on the right).
 //
-//   lpf_dialogue_cli input.wav answers.mid [--render out.wav] [--patience 0.5] [--interruption 0.3]
+//   lpf_dialogue_cli input.wav|input.mid answers.mid [--render out.wav] [--patience 0.5] [--interruption 0.3]
 //                    [--length 1] [--memory 0.5] [--fidelity 0.6] [--contrast 0.2] [--scale 0.7]
 //                    [--low 36] [--high 96] [--sensitivity 0.5] [--gate -55] [--seed 1]
 //                    [--bright 1] [--random 0.2] [--humanize 0.3]
@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include "../core/engine.h"
@@ -86,6 +87,74 @@ static bool writeWavStereo(const char* path, const std::vector<float>& l, const 
 }
 
 struct Ev { int64_t t; bool on; int ch, pitch, vel; };
+
+// Standard MIDI File reader (format 0/1, tempo map). Notes only, times in seconds.
+struct InNote { double t; bool on; int ch, pitch, vel; };
+static bool readMidi(const char* path, std::vector<InNote>& out) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    std::vector<uint8_t> d;
+    uint8_t buf[65536];
+    size_t r;
+    while ((r = std::fread(buf, 1, sizeof buf, f)) > 0) d.insert(d.end(), buf, buf + r);
+    std::fclose(f);
+    auto be32 = [&](size_t p) { return (uint32_t)d[p] << 24 | (uint32_t)d[p + 1] << 16 | (uint32_t)d[p + 2] << 8 | d[p + 3]; };
+    if (d.size() < 14 || std::memcmp(d.data(), "MThd", 4)) return false;
+    const int ntr = d[10] << 8 | d[11];
+    const int division = d[12] << 8 | d[13];
+    if (division & 0x8000) return false;  // SMPTE time not supported
+    struct Raw { uint64_t tick; int order; int kind; int a, b, c; };  // kind 0 note, 1 tempo
+    std::vector<Raw> raw;
+    size_t pos = 8 + be32(4);
+    int order = 0;
+    for (int t = 0; t < ntr && pos + 8 <= d.size(); ++t) {
+        if (std::memcmp(&d[pos], "MTrk", 4)) return false;
+        const size_t len = be32(pos + 4), end = std::min(d.size(), pos + 8 + len);
+        size_t p = pos + 8;
+        uint64_t tick = 0;
+        int status = 0;
+        auto vlq = [&]() { uint32_t v = 0; while (p < end) { uint8_t c = d[p++]; v = v << 7 | (c & 0x7F); if (!(c & 0x80)) break; } return v; };
+        while (p < end) {
+            tick += vlq();
+            if (p >= end) break;
+            uint8_t c = d[p];
+            if (c & 0x80) { status = c; ++p; }
+            if (status == 0xFF) {
+                if (p >= end) break;
+                const uint8_t type = d[p++];
+                const uint32_t l = vlq();
+                if (type == 0x51 && l == 3 && p + 3 <= end)
+                    raw.push_back({tick, order++, 1, (int)(d[p] << 16 | d[p + 1] << 8 | d[p + 2]), 0, 0});
+                p += l;
+                status = 0;
+            } else if (status == 0xF0 || status == 0xF7) {
+                p += vlq();
+                status = 0;
+            } else if (status >= 0x80) {
+                const int hi = status & 0xF0, ch = (status & 15) + 1;
+                const int n = (hi == 0xC0 || hi == 0xD0) ? 1 : 2;
+                if (p + n > end) break;
+                const int a = d[p], b = n > 1 ? d[p + 1] : 0;
+                p += n;
+                if (hi == 0x90) raw.push_back({tick, order++, 0, ch, a, b});
+                else if (hi == 0x80) raw.push_back({tick, order++, 0, ch, a, 0});
+            } else {
+                ++p; // garbage
+            }
+        }
+        pos += 8 + len;
+    }
+    std::stable_sort(raw.begin(), raw.end(), [](const Raw& x, const Raw& y) { return x.tick < y.tick; });
+    double usPerQ = 500000.0, sec = 0.0;
+    uint64_t lastTick = 0;
+    for (auto& e : raw) {
+        sec += (double)(e.tick - lastTick) * usPerQ / 1e6 / division;
+        lastTick = e.tick;
+        if (e.kind == 1) usPerQ = e.a;
+        else out.push_back({sec, e.c > 0, e.a, e.b, e.c});
+    }
+    return true;
+}
 struct Collect : MidiSink {
     std::vector<Ev> ev;
     int64_t base = 0;
@@ -183,8 +252,21 @@ int main(int argc, char** argv) {
         else { std::fprintf(stderr, "unknown option %s\n", k.c_str()); return 2; }
     }
     std::vector<float> in;
+    std::vector<InNote> midiIn;
     double sr = 44100.0;
-    if (!readWav(argv[1], in, sr)) { std::fprintf(stderr, "cannot read %s (PCM 8/16/24/32 or float32 WAV)\n", argv[1]); return 1; }
+    const std::string inPath = argv[1];
+    const bool midiFile = inPath.size() > 4 && (inPath.substr(inPath.size() - 4) == ".mid" ||
+                                                inPath.substr(inPath.size() - 5) == ".midi");
+    if (midiFile) {
+        if (!readMidi(argv[1], midiIn)) { std::fprintf(stderr, "cannot read %s (standard MIDI file)\n", argv[1]); return 1; }
+        double endT = 0.0;
+        for (auto& m : midiIn) endT = std::max(endT, m.t);
+        in.assign((size_t)((endT + 1.0) * sr), 0.f);
+        p.source = 1;
+    } else if (!readWav(argv[1], in, sr)) {
+        std::fprintf(stderr, "cannot read %s (PCM 8/16/24/32 or float32 WAV)\n", argv[1]);
+        return 1;
+    }
     in.resize(in.size() + (size_t)(sr * 6.0), 0.f);  // room for the last answer
 
     Engine e;
@@ -195,8 +277,13 @@ int main(int argc, char** argv) {
     Transport tr;
     int heard = 0;
     const int B = 256;
+    size_t nextMidi = 0;
     for (int64_t pos = 0; pos < (int64_t)in.size(); pos += B) {
         int n = (int)std::min<int64_t>(B, in.size() - pos);
+        while (nextMidi < midiIn.size() && (int64_t)(midiIn[nextMidi].t * sr) < pos + n) {
+            const InNote& m = midiIn[nextMidi++];
+            e.addMidiInput((int)std::max<int64_t>(0, (int64_t)(m.t * sr) - pos), m.on, m.ch, m.pitch, m.vel);
+        }
         c.base = pos;
         e.process(in.data() + pos, n, tr, c);
         heard = e.memorySize();
@@ -216,6 +303,11 @@ int main(int argc, char** argv) {
     if (render) {
         std::vector<float> r(in.size(), 0.f);
         renderAnswer(c.ev, r, sr);
+        if (midiFile) {   // play the input notes too, on the left
+            std::vector<Ev> ie;
+            for (auto& m : midiIn) ie.push_back({(int64_t)(m.t * sr), m.on, m.ch, m.pitch, m.vel});
+            renderAnswer(ie, in, sr);
+        }
         if (!writeWavStereo(render, in, r, sr)) { std::fprintf(stderr, "cannot write %s\n", render); return 1; }
     }
     return 0;

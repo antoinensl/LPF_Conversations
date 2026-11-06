@@ -48,7 +48,7 @@ DialogueEditor::DialogueEditor(DialogueProcessor& p) : AudioProcessorEditor(&p),
     addKnob(gate, "gate", "Seuil", u8("En dessous de ce niveau, c'est du silence. Règle-le juste au-dessus du bruit de fond."));
     addKnob(low, "low", "Note basse", u8("Note la plus grave de la réponse."));
     addKnob(high, "high", "Note haute", u8("Note la plus aiguë de la réponse."));
-    addKnob(channel, "channel", "Canal", u8("Canal MIDI de sortie."));
+    addKnob(channel, "channel", "Canal sortie", u8("Canal MIDI des réponses."));
 
     grid.addItemList({u8("Libre"), "1/4", "1/8", "1/16"}, 1);
     addAndMakeVisible(grid);
@@ -66,6 +66,30 @@ DialogueEditor::DialogueEditor(DialogueProcessor& p) : AudioProcessorEditor(&p),
     addAndMakeVisible(modeLabel);
     mode.setTooltip(u8("Instrument : 55 Hz - 2 kHz. Bright : oiseaux, voix parlée ou chantée "
                        "(100 Hz - 10 kHz, trilles, glissandi suivis note à note)."));
+
+    auto combo = [this](juce::ComboBox& c, juce::Label& l, const juce::String& text, const juce::StringArray& items,
+                        const juce::String& id, std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>& att,
+                        const juce::String& tip) {
+        c.addItemList(items, 1);
+        addAndMakeVisible(c);
+        att = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(proc.apvts, id, c);
+        l.setText(text, juce::dontSendNotification);
+        l.setJustificationType(juce::Justification::centred);
+        addAndMakeVisible(l);
+        c.setTooltip(tip);
+    };
+    combo(source, sourceLabel, "Source", {"Audio", "MIDI", "Audio + MIDI"}, "source", sourceAtt,
+          u8("Ce qu'il écoute : l'audio de la piste, le MIDI qui arrive (clavier, item MIDI), ou les deux."));
+    {
+        juce::StringArray ch{u8("Tous")};
+        for (int i = 1; i <= 16; ++i) ch.add(juce::String(i));
+        combo(midiIn, midiInLabel, u8("Entrée MIDI"), ch, "midiin", midiInAtt,
+              u8("Canal MIDI écouté. Ses propres réponses qui reviendraient en boucle sont ignorées."));
+    }
+    thru.setButtonText("MIDI thru");
+    thru.setTooltip(u8("Renvoie aussi le MIDI reçu sur la sortie, mélangé aux réponses."));
+    addAndMakeVisible(thru);
+    thruAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(proc.apvts, "thru", thru);
 
     freeze.setButtonText(u8("Figer la mémoire"));
     respond.setButtonText(u8("Répondre"));
@@ -189,7 +213,12 @@ void DialogueEditor::resized() {
     for (Knob* k : {&sens, &gate, &low, &high, &channel}) { place(*k, x, 272, 84); x += 86; }
     gridLabel.setBounds(600, 276, 130, 16);
     grid.setBounds(610, 298, 110, 24);
-    freeze.setBounds(30, 414, 170, 24);
-    respond.setBounds(200, 414, 120, 24);
+    sourceLabel.setBounds(26, 334, 120, 16);
+    source.setBounds(30, 356, 112, 24);
+    midiInLabel.setBounds(600, 334, 130, 16);
+    midiIn.setBounds(610, 356, 110, 24);
+    freeze.setBounds(30, 414, 160, 24);
+    respond.setBounds(190, 414, 110, 24);
+    thru.setBounds(300, 414, 110, 24);
     clear.setBounds(590, 412, 140, 26);
 }

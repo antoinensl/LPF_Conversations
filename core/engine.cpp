@@ -22,6 +22,13 @@ void Engine::reset() {
     for (auto& s : pool_) s.used = false;
     std::fill(soundId_, soundId_ + 128, 0u);
     harmony_ = Harmony();
+    midiQn_ = 0; heldCount_ = 0;
+    std::fill(held_, held_ + 128, false);
+    std::fill(echoHeld_, echoHeld_ + 128, false);
+    std::fill(lastEmitOn_, lastEmitOn_ + 128, (int64_t)-1000000);
+    midiLastActive_ = -1000000; lastMidiStart_ = -1000000; lastMidiEventPitch_ = -1;
+    std::fill(midiKeyHist_, midiKeyHist_ + 12, 0.f);
+    std::fill(midiChordC_, midiChordC_ + 12, 0.f);
 }
 
 void Engine::setParams(const Params& p) {
@@ -39,6 +46,8 @@ void Engine::setParams(const Params& p) {
     p_.grid = std::clamp(p_.grid, 0, 3);
     p_.randomness = std::clamp(p_.randomness, 0.f, 1.f);
     p_.humanize = std::clamp(p_.humanize, 0.f, 1.f);
+    p_.source = std::clamp(p_.source, 0, 2);
+    p_.midiInChannel = std::clamp(p_.midiInChannel, 0, 16);
 }
 
 float Engine::rnd() {
@@ -144,15 +153,24 @@ void Engine::updateHarmony() {
         notesK[pc] += w; wN += 1.f;
     }
     normalise12(notesK);
-    const bool haveA = wA > 20.f, haveN = wN >= 1.f;
-    for (int i = 0; i < 12; ++i)
-        keyV[i] = (haveA ? audioK[i] : 0.f) * (haveN ? 0.5f : 1.f) + (haveN ? notesK[i] : 0.f) * (haveA ? 0.5f : 1.f);
+    const bool useAudio = p_.source != 1, useMidi = p_.source != 0;
+    float midiK[12];
+    float wM = 0.f;
+    for (int i = 0; i < 12; ++i) { midiK[i] = midiKeyHist_[i]; wM += midiK[i]; }
+    normalise12(midiK);
+    const bool haveA = useAudio && wA > 20.f, haveN = wN >= 1.f, haveM = useMidi && wM > 1.f;
+    {
+        const int k = (int)haveA + (int)haveN + (int)haveM;
+        for (int i = 0; i < 12; ++i)
+            keyV[i] = k ? ((haveA ? audioK[i] : 0.f) + (haveN ? notesK[i] : 0.f) + (haveM ? midiK[i] : 0.f)) / k : 0.f;
+    }
+    if (haveM) wN += wM;   // MIDI notes are certain: they count as evidence
     floor12(keyV, 0.03f);
     harmony_.keyRoot = -1; harmony_.scaleMask = 0; harmony_.keyConfidence = 0.f;
-    if ((haveA || haveN) && !(wN >= 6.f || wA > 100.f)) {
+    if ((haveA || haveN || haveM) && !(wN >= 6.f || wA > 100.f)) {
         // not enough heard yet to name a scale: stay on the notes actually played
         for (int i = 0; i < 12; ++i) if (keyV[i] > 0.05f) harmony_.scaleMask |= (uint16_t)(1 << i);
-    } else if (haveA || haveN) {
+    } else if (haveA || haveN || haveM) {
         float best = -1e9f;
         for (int sc = 0; sc < Harmony::NumScales; ++sc)
             for (int root = 0; root < 12; ++root) {
@@ -183,12 +201,27 @@ void Engine::updateHarmony() {
         wR += w;
     }
     normalise12(notesC);
-    const bool haveC = wC > 5.f, haveR = wR > 0.05f;
-    for (int i = 0; i < 12; ++i)
-        chordV[i] = (haveC ? audioC[i] : 0.f) * (haveR ? 0.5f : 1.f) + (haveR ? notesC[i] : 0.f) * (haveC ? 0.5f : 1.f);
+    const bool haveC = useAudio && wC > 5.f, haveR = wR > 0.05f;
+    float midiC[12], heldC[12] = {};
+    float wMC = 0.f, wH = 0.f;
+    for (int i = 0; i < 12; ++i) { midiC[i] = midiChordC_[i]; wMC += midiC[i]; }
+    normalise12(midiC);
+    if (useMidi)
+        for (int p = 0; p < 128; ++p)
+            if (held_[p]) { heldC[p % 12] += 0.3f + heldVel_[p]; wH += 1.f; }
+    normalise12(heldC);
+    const bool haveMC = useMidi && wMC > 0.2f, haveH = wH > 0.f;
+    {
+        const int k = (int)haveC + (int)haveR + (int)haveMC;
+        for (int i = 0; i < 12; ++i) {
+            const float rest = k ? ((haveC ? audioC[i] : 0.f) + (haveR ? notesC[i] : 0.f) + (haveMC ? midiC[i] : 0.f)) / k : 0.f;
+            // notes held on the keyboard are the chord, the rest only colours it
+            chordV[i] = haveH ? 0.75f * heldC[i] + 0.25f * rest : rest;
+        }
+    }
     floor12(chordV, 0.04f);
     harmony_.chordRoot = -1; harmony_.chordMask = 0; harmony_.chordConfidence = 0.f;
-    if (haveC || haveR) {
+    if (haveC || haveR || haveMC || haveH) {
         float best = -1e9f;
         for (int ch = 0; ch < Harmony::NumChords; ++ch)
             for (int root = 0; root < 12; ++root) {
@@ -465,6 +498,71 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
     }
 }
 
+void Engine::addMidiInput(int offset, bool on, int ch, int pitch, int vel) {
+    if (midiQn_ >= 1024 || pitch < 0 || pitch > 127) return;
+    if (on && vel <= 0) on = false;
+    midiQ_[midiQn_++] = {std::max(0, offset), on, (uint8_t)std::clamp(ch, 1, 16), (uint8_t)pitch,
+                         (uint8_t)std::clamp(vel, 0, 127)};
+}
+
+void Engine::onMidi(const MidiIn& m, const Transport& tr, int64_t blockStart) {
+    if (p_.midiInChannel != 0 && m.ch != p_.midiInChannel) return;
+    const int64_t t = blockStart + m.offset;
+    const int p = m.pitch;
+    if (!m.on) {
+        if (echoHeld_[p]) { echoHeld_[p] = false; return; }
+        if (!held_[p]) return;
+        held_[p] = false;
+        if (--heldCount_ <= 0) { heldCount_ = 0; midiLastActive_ = t; }
+        if (p == lastMidiEventPitch_) {
+            HeardEvent e;
+            e.type = HeardEvent::End; e.time = t; e.commitTime = t; e.pitch = (float)p; e.pitched = true;
+            onHeard(e, tr, blockStart);
+            lastMidiEventPitch_ = -1;
+        }
+        return;
+    }
+    // our own answer coming back (MIDI loop): ignore it
+    if (m.ch == p_.channel && (soundId_[p] != 0 || t - lastEmitOn_[p] < (int64_t)(0.05 * sr_))) {
+        echoHeld_[p] = true;
+        return;
+    }
+    if (held_[p]) return;                       // repeated note-on without note-off
+    held_[p] = true;
+    heldVel_[p] = m.vel / 127.f;
+    ++heldCount_;
+    midiLastActive_ = t;
+    const float w = 0.3f + m.vel / 127.f;
+    midiKeyHist_[p % 12] += w;
+    midiChordC_[p % 12] += w;
+
+    // notes struck together (< 30 ms) are one event: the top note carries the melody
+    if (t - lastMidiStart_ < (int64_t)(0.03 * sr_) && lastMidiEventPitch_ >= 0 && !recent_.empty()) {
+        if (p > lastMidiEventPitch_) {
+            auto raise = [&](auto& ring) {
+                if (ring.empty() || ring.last().time != lastMidiStart_) return;
+                MemEvent& last = ring.last();
+                const float prevPitch = ring.size() >= 2 ? ring.at(ring.count() - 2).pitch : (float)p;
+                last.pitch = (float)p;
+                last.interval = ring.size() >= 2 ? (int8_t)std::clamp((int)std::lround(p - prevPitch), -24, 24) : 0;
+                last.velocity = std::max(last.velocity, m.vel / 127.f);
+            };
+            raise(recent_);
+            if (!p_.freeze) raise(memory_);
+            lastMidiEventPitch_ = p;
+        }
+        return;
+    }
+    lastMidiStart_ = t;
+    lastMidiEventPitch_ = p;
+    HeardEvent e;
+    e.type = HeardEvent::Start;
+    e.time = t; e.commitTime = t;
+    e.pitch = (float)p; e.pitched = true;
+    e.velocity = m.vel / 127.f;
+    onHeard(e, tr, blockStart);
+}
+
 void Engine::emit(int64_t blockStart, int n, MidiSink& out) {
     const int64_t end = blockStart + n;
     int k = 0;
@@ -490,6 +588,7 @@ void Engine::emit(int64_t blockStart, int n, MidiSink& out) {
             if (soundId_[s.pitch] != 0) out.noteOff(off, ch, s.pitch);
             out.noteOn(off, ch, s.pitch, s.vel);
             soundId_[s.pitch] = s.id;
+            lastEmitOn_[s.pitch] = blockStart + off;
         } else if (soundId_[s.pitch] == s.id) {
             out.noteOff(off, ch, s.pitch);
             soundId_[s.pitch] = 0;
@@ -518,6 +617,9 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
         clearRequested_ = false;
         memory_.clear(); recent_.clear();
         lastStartTime_ = -1; newEvents_ = 0;
+        std::fill(midiKeyHist_, midiKeyHist_ + 12, 0.f);
+        std::fill(midiChordC_, midiChordC_ + 12, 0.f);
+        lastMidiEventPitch_ = -1;
     }
     AnalyzerSettings as;
     as.sensitivity = p_.sensitivity;
@@ -526,13 +628,48 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
     analyzer_.setSettings(as);
 
     const int64_t blockStart = now_;
+    const bool useAudio = p_.source != 1, useMidi = p_.source != 0;
     analyzer_.process(in, n, blockStart);
-    for (int i = 0; i < analyzer_.numEvents(); ++i) onHeard(analyzer_.event(i), tr, blockStart);
-    analyzer_.clearEvents();
 
-    if (newEvents_ > 0 && !analyzer_.isActive()) {
-        const int64_t tSil = analyzer_.lastActiveTime() + (int64_t)(silenceWaitSeconds() * sr_);
+    // MIDI in time order (stable), then merged with what the ears heard
+    for (int i = 1; i < midiQn_; ++i) {
+        MidiIn x = midiQ_[i];
+        int j = i - 1;
+        while (j >= 0 && midiQ_[j].offset > x.offset) { midiQ_[j + 1] = midiQ_[j]; --j; }
+        midiQ_[j + 1] = x;
+    }
+    {
+        const int na = useAudio ? analyzer_.numEvents() : 0;
+        const int nm = useMidi ? midiQn_ : 0;
+        int ia = 0, im = 0;
+        while (ia < na || im < nm) {
+            const bool takeMidi = im < nm && (ia >= na || blockStart + std::min(midiQ_[im].offset, n - 1) <=
+                                                              analyzer_.event(ia).commitTime);
+            if (takeMidi) {
+                MidiIn m = midiQ_[im++];
+                m.offset = std::min(m.offset, n - 1);
+                onMidi(m, tr, blockStart);
+            } else {
+                onHeard(analyzer_.event(ia++), tr, blockStart);
+            }
+        }
+    }
+    midiQn_ = 0;
+    analyzer_.clearEvents();
+    if (heldCount_ > 0) midiLastActive_ = blockStart + n;
+
+    const bool active = (useAudio && analyzer_.isActive()) || (useMidi && heldCount_ > 0);
+    if (newEvents_ > 0 && !active) {
+        int64_t last = -1000000;
+        if (useAudio) last = std::max(last, analyzer_.lastActiveTime());
+        if (useMidi) last = std::max(last, midiLastActive_);
+        const int64_t tSil = last + (int64_t)(silenceWaitSeconds() * sr_);
         if (tSil < blockStart + n) trigger(std::max(tSil, blockStart), tr, blockStart);
+    }
+    {
+        const float kk = std::exp(-(float)n / (float)(20.0 * sr_));
+        const float kc = std::exp(-(float)n / (float)(1.0 * sr_));
+        for (int i = 0; i < 12; ++i) { midiKeyHist_[i] *= kk; midiChordC_[i] *= kc; }
     }
 
     emit(blockStart, n, out);

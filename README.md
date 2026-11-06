@@ -1,6 +1,6 @@
 # LPF Dialogue
 
-Un plugin qui écoute ce que tu joues (n'importe quel son : guitare, voix, field recording…) et qui te répond en MIDI. Tout se passe en local, sans réseau ni IA distante.
+Un plugin qui écoute ce que tu joues (n'importe quel son : guitare, voix, field recording… ou du MIDI) et qui te répond en MIDI. Tout se passe en local, sans réseau ni IA distante.
 
 - **Écoute** : attaques (flux spectral), hauteur (YIN), niveau, brillance, bruit. Les sons sans hauteur nette sont aussi entendus : leur brillance est traduite en hauteur.
 - **Mémoire** : retient ce que tu as joué (intervalles, rythmes, durées, nuances, notes utilisées).
@@ -9,6 +9,7 @@ Un plugin qui écoute ce que tu joues (n'importe quel son : guitare, voix, field
 - **Harmonie** : détecte la gamme (11 modes) et l'accord en cours, y compris sur des accords grattés. L'interface les affiche, et les notes inventées s'en servent.
 - **Jeu humain** : Hasard (notes inventées, ornements, silences, rythmes déplacés) et Humanisation (délai de réaction variable, micro-timing, phrasé).
 - **Deux modes d'écoute** : Instrument, ou Bright pour les oiseaux et les voix.
+- **Entrée MIDI** : il écoute aussi un clavier ou un item MIDI, seul ou en même temps que l'audio. Hauteurs exactes, réponse sans latence, accords tenus reconnus exactement.
 
 Formats : VST3, AU (macOS), Standalone. Le plugin laisse passer l'audio sans le modifier et ajoute une sortie MIDI.
 
@@ -29,7 +30,10 @@ Formats : VST3, AU (macOS), Standalone. Le plugin laisse passer l'audio sans le 
 | **Note basse / haute** | Tessiture de la réponse (repli à l'octave). |
 | **Sensibilité / Seuil** | Détection des attaques. Mets le seuil juste au-dessus du bruit de fond (la barre du haut montre le niveau d'entrée et le seuil). |
 | **Grille** | Libre, ou réponses calées sur 1/4, 1/8, 1/16 quand le transport de l'hôte est en lecture. |
-| **Canal MIDI**, **Figer la mémoire**, **Répondre**, **Effacer la mémoire** | — |
+| **Source** | Audio, MIDI, ou Audio + MIDI (par exemple guitare et clavier en même temps). |
+| **Entrée MIDI** | Canal écouté (Tous ou 1-16). |
+| **MIDI thru** | Renvoie aussi le MIDI reçu sur la sortie, mélangé aux réponses (mets alors les réponses sur un autre canal). |
+| **Canal sortie**, **Figer la mémoire**, **Répondre**, **Effacer la mémoire** | — |
 
 Quelques réglages de départ :
 - **Ping-pong** : Patience 40 %, Interruption 0 %, Longueur ×1.
@@ -46,17 +50,21 @@ Quelques réglages de départ :
 3. Envoi de la piste 1 vers la piste 2 : bouton Route → *Add new send* → audio **None**, MIDI **All → All**.
 4. Joue.
 
+**En MIDI** : mets Source sur MIDI. La piste 1 reçoit ton clavier (armée, monitoring actif) ou contient un item MIDI. L'envoi vers la piste 2 reste le même. Avec MIDI thru, une seule piste de synthé peut jouer ton clavier et les réponses ; mets alors les réponses sur un autre canal de sortie si tu veux les séparer.
+
+En MIDI, les notes jouées ensemble (à moins de 30 ms) comptent comme un seul évènement mélodique, la note du haut. Toutes les notes servent à reconnaître l'accord. Si ses réponses reviennent vers lui (boucle MIDI), il les reconnaît et les ignore. Un vrai clavier sur le même canal et la même note qu'une réponse en train de sonner serait aussi ignoré : mieux vaut des canaux différents.
+
 Dans **Ableton Live**, un VST ne peut pas envoyer de MIDI vers une autre piste. Lance alors la version **Standalone** avec sa sortie MIDI vers un bus virtuel (IAC sur Mac), que Live reçoit comme un clavier. Un device Max for Live est une piste pour plus tard.
 
 ## Standalone → Ableton Move ou autre machine
 
-La version Standalone écoute l'entrée de ta carte son. Dans *Options → Audio/MIDI Settings*, choisis la **sortie MIDI** : le Move branché en USB, un bus IAC, etc. Par défaut, JUCE coupe l'entrée audio en standalone pour éviter le larsen (bandeau jaune) : réactive-la si tu écoutes au casque.
+La version Standalone écoute l'entrée de ta carte son et/ou une entrée MIDI. Dans *Options → Audio/MIDI Settings*, choisis l'**entrée MIDI** (ton clavier) et la **sortie MIDI** : le Move branché en USB, un bus IAC, etc. Par défaut, JUCE coupe l'entrée audio en standalone pour éviter le larsen (bandeau jaune) : réactive-la si tu écoutes au casque.
 
 Attention au larsen musical : si le synthé qui répond s'entend dans le micro, le plugin finira par se répondre à lui-même. Utilise un casque, ou monte le seuil.
 
 ## Outil hors ligne
 
-`lpf_dialogue_cli` passe un fichier WAV dans le moteur et écrit les réponses dans un fichier MIDI. Il peut aussi faire un aperçu stéréo : ton son à gauche, la réponse jouée par un petit synthé à droite.
+`lpf_dialogue_cli` passe un fichier WAV **ou MIDI** (.mid, format 0/1, changements de tempo gérés) dans le moteur et écrit les réponses dans un fichier MIDI. Il peut aussi faire un aperçu stéréo : ton jeu à gauche, la réponse jouée par un petit synthé à droite.
 
 ```
 lpf_dialogue_cli phrase.wav reponse.mid --render apercu.wav --patience 0.6 --interruption 0 --contrast 0.3
@@ -91,6 +99,7 @@ Licence : JUCE 8 est sous AGPLv3 ou licence commerciale JUCE. Pour diffuser des 
 - Note confirmée 20 ms après l'attaque (32 à 38 ms pour les notes graves de guitare, en dessous de 110 Hz).
 - Mode réflexe : réponse au plus 21 ms après la note entendue (35 ± 13 ms avec Humanisation à 100 %).
 - Bright : sifflements de 2,5 à 9 kHz justes à ±0,2 demi-ton, note confirmée en ~7 ms. Trille de 14 notes de 30 ms entièrement entendue (le mode Instrument n'en entend que 9). Glissando 2 → 4 kHz suivi en 7 notes montantes.
+- MIDI : réponse réflexe sur la même trame que la note reçue (0 ms). Accord tenu C-E-G-Bb reconnu C7. Boucle MIDI sans auto-dialogue. Filtre de canal, mélange audio + MIDI, attente des touches relâchées en mode écoute. MIDI thru vérifié dans un hôte VST3.
 - Accords grattés reconnus : C, Am, G7, Fmaj7, plus un changement C → G. Arpège Am7 reconnu. Gammes reconnues : Ré dorien, La mineur harmonique, penta mineure.
 - Validé par pluginval (niveau 10, éditeur compris). Sortie MIDI vérifiée dans un hôte VST3.
 
