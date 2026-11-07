@@ -623,6 +623,17 @@ static void testHarmony() {
         CHECK(h.chordRoot == 7 && h.chord == Harmony::Maj, "C then G detected as %s", chordName(h).c_str());
     }
     {
+        // a melody over a held Dm7 pad: the pitch tracker can hear a 'missing fundamental' (Bb),
+        // the spectrum knows better
+        std::vector<float> sig((size_t)(SR * 3.05), 0.f);
+        for (int n : {50, 57, 62, 65}) addTone(sig, {0.0, 3.0, midiToHz(n), 0.05});
+        for (auto& n : melody(0.0, 12, 0.25, 0.2, {62, 65, 69, 72, 69, 67, 65, 64, 62, 60, 62, 65}, 0.15)) addTone(sig, n);
+        Harmony h = listen(sig);
+        std::printf("  %-18s -> %s\n", "melody over Dm7", chordName(h).c_str());
+        CHECK(h.chordRoot == 2 && (h.chord == Harmony::Min || h.chord == Harmony::Min7),
+              "melody over Dm7 pad detected as %s", chordName(h).c_str());
+    }
+    {
         // arpeggiated Am7, monophonic
         std::vector<float> sig((size_t)(SR * 2.5), 0.f);
         for (auto& n : melody(0.1, 8, 0.25, 0.22, {57, 60, 64, 67})) addTone(sig, n);

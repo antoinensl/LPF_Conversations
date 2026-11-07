@@ -145,11 +145,15 @@ void Engine::updateHarmony() {
     float wN = 0.f;
     const int64_t cnt = memory_.count();
     const int64_t window = (int64_t)std::lround(8.0 * std::pow(2.0, p_.memory * 9.0));
+    // a note whose pitch class is absent from the audio spectrum is probably a pitch-tracker
+    // error on polyphonic sound (a 'missing fundamental'): it counts less
+    const bool chromaKOk = p_.source != 1 && wA > 0.01f;
     for (int64_t s = std::max(memory_.first(), cnt - std::max<int64_t>(window, 32)); s < cnt; ++s) {
         const MemEvent& e = memory_.at(s);
         if (!e.pitched) continue;
         const int pc = (((int)std::lround(e.pitch)) % 12 + 12) % 12;
-        const float w = e.velocity * (e.dur > 0.f ? std::min(e.dur, 1.f) : 0.25f) + 0.01f;
+        float w = e.velocity * (e.dur > 0.f ? std::min(e.dur, 1.f) : 0.25f) + 0.01f;
+        if (chromaKOk && !e.midi) w *= std::clamp(audioK[pc] * 12.f, 0.1f, 1.f);
         notesK[pc] += w; wN += 1.f;
     }
     normalise12(notesK);
@@ -190,13 +194,15 @@ void Engine::updateHarmony() {
     // --- chord: short-term audio chroma + the last notes, weighted by how recent they are
     float audioC[12], notesC[12] = {}, chordV[12] = {};
     const float wC = analyzer_.chroma(false, audioC);
+    const bool chromaCOk = p_.source != 1 && wC > 0.01f;   // shape of the chroma survives its decay
     float wR = 0.f;
     for (int64_t s = recent_.first(); s < recent_.count(); ++s) {
         const MemEvent& e = recent_.at(s);
         if (!e.pitched) continue;
         const float age = (float)((now_ - e.time) / sr_);
-        const float w = e.velocity * std::exp(-std::max(0.f, age) / 1.5f) *
-                        (e.dur > 0.f ? std::min(e.dur, 1.f) : 0.3f);
+        float w = e.velocity * std::exp(-std::max(0.f, age) / 1.5f) *
+                  (e.dur > 0.f ? std::min(e.dur, 1.f) : 0.3f);
+        if (chromaCOk && !e.midi) w *= std::clamp(audioC[(((int)std::lround(e.pitch)) % 12 + 12) % 12] * 12.f, 0.1f, 1.f);
         notesC[(((int)std::lround(e.pitch)) % 12 + 12) % 12] += w;
         wR += w;
     }
@@ -476,6 +482,7 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
                                : std::min(4.f, (float)((e.time - lastStartTime_) / sr_));
     m.ioiClass = ioiClassOf(m.ioi);
     m.time = e.time;
+    m.midi = e.midi;
     m.interval = recent_.empty()
                      ? 0
                      : (int8_t)std::clamp((int)std::lround(e.pitch - recent_.last().pitch), -24, 24);
@@ -560,6 +567,7 @@ void Engine::onMidi(const MidiIn& m, const Transport& tr, int64_t blockStart) {
     e.time = t; e.commitTime = t;
     e.pitch = (float)p; e.pitched = true;
     e.velocity = m.vel / 127.f;
+    e.midi = true;
     onHeard(e, tr, blockStart);
 }
 

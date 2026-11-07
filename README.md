@@ -11,6 +11,8 @@ Un plugin qui écoute ce que tu joues (n'importe quel son : guitare, voix, field
 - **Deux modes d'écoute** : Instrument, ou Bright pour les oiseaux et les voix.
 - **Entrée MIDI** : il écoute aussi un clavier ou un item MIDI, seul ou en même temps que l'audio. Hauteurs exactes, réponse sans latence, accords tenus reconnus exactement.
 
+Interface : skin brutaliste (papier, encre, une seule couleur signal, grille apparente, Space Mono). Chaque réglage est une case : on glisse horizontalement pour régler, la molette marche aussi, un double-clic remet la valeur par défaut. La gamme et l'accord détectés s'affichent en grand.
+
 Formats : VST3, AU (macOS), Standalone. Le plugin laisse passer l'audio sans le modifier et ajoute une sortie MIDI.
 
 ## Réglages
@@ -84,12 +86,14 @@ JUCE 8 est téléchargé automatiquement (ou `-DLPFD_JUCE_DIR=/chemin/vers/JUCE`
 
 Le workflow GitHub Actions (`.github/workflows/build.yml`) compile pour macOS, Windows et Linux, lance les tests et publie une release à chaque tag `v*`. Les binaires ne sont pas signés : sur Mac, après téléchargement, lance `xattr -dr com.apple.quarantine "LPF Dialogue.vst3"` (idem pour le `.component` et l'app).
 
+Police : Space Mono (SIL Open Font License, `assets/fonts/OFL.txt`), intégrée au plugin.
+
 Licence : JUCE 8 est sous AGPLv3 ou licence commerciale JUCE. Pour diffuser des binaires, publie ce code sous AGPLv3 ou prends une licence JUCE.
 
 ## Structure
 
 - `core/` : moteur sans dépendance (écoute, mémoire, génération, ordonnancement). Temps réel : aucune allocation, aucun verrou dans `process()`.
-- `plugin/` : emballage JUCE et interface.
+- `plugin/` : emballage JUCE et interface (`BrutalLookAndFeel` : la skin).
 - `tools/` : outil en ligne de commande.
 - `tests/` : tests sur signaux synthétiques : justesse, latence, modes de réactivité, politesse, tessiture, tonalité, grille, mode Bright (sifflements, trilles, glissandi, syllabes), accords et gammes, hasard et humanisation, équilibre note-on/note-off, absence d'allocation, fuzz.
 

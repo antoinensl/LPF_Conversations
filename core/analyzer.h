@@ -16,6 +16,7 @@ struct HeardEvent {
     float velocity = 0.5f;   // 0..1, from peak level
     float centroidHz = 0.f;  // spectral centroid
     float flatness = 0.f;    // 0 = tonal, 1 = noise
+    bool midi = false;       // came from MIDI input (exact), not from the ears
 };
 
 struct AnalyzerSettings {

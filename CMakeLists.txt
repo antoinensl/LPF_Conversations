@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(LPFDialogue VERSION 0.3.0 LANGUAGES C CXX)
+project(LPFDialogue VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -66,12 +66,16 @@ if(LPFD_BUILD_PLUGIN)
     MICROPHONE_PERMISSION_TEXT "LPF Dialogue listens to your instrument to answer it."
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-  target_sources(LPFDialogue PRIVATE plugin/PluginProcessor.cpp plugin/PluginEditor.cpp)
+  juce_add_binary_data(LPFDialogueAssets SOURCES
+    assets/fonts/SpaceMono-Regular.ttf assets/fonts/SpaceMono-Bold.ttf)
+  set_target_properties(LPFDialogueAssets PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+  target_sources(LPFDialogue PRIVATE plugin/PluginProcessor.cpp plugin/PluginEditor.cpp plugin/BrutalLookAndFeel.cpp)
   target_compile_definitions(LPFDialogue PUBLIC
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
   target_link_libraries(LPFDialogue
-    PRIVATE lpfd_core juce::juce_audio_utils juce::juce_audio_processors
+    PRIVATE lpfd_core LPFDialogueAssets juce::juce_audio_utils juce::juce_audio_processors
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
            juce::juce_recommended_warning_flags)
 endif()
