@@ -50,6 +50,22 @@ public:
     std::atomic<bool> uiHearing{false}, uiAnswering{false};
     std::atomic<float> uiLevelDb{-120.f}, uiPitch{0.f};
     std::atomic<int> uiKeyRoot{-1}, uiScale{0}, uiChordRoot{-1}, uiChord{0};
+    std::atomic<int> uiPhase{0}, uiHeardInPhrase{0}, uiEventsNeeded{1};
+    std::atomic<float> uiWaitProgress{0.f}, uiWaitRemaining{0.f}, uiSilenceWait{1.f};
+    std::atomic<uint64_t> uiNotesSent{0};
+    std::atomic<int64_t> uiNow{0};
+    std::atomic<double> uiSampleRate{44100.0};
+    std::atomic<float> uiInputPeakDb{-120.f};   // loudest level in the last ~2 s
+
+    // the conversation, for the display (read on the message thread)
+    const lpfd::Timeline& timeline() const { return engine.timeline(); }
+
+    // "Mesurer le silence": listens 3 s, then proposes a gate just above the room noise
+    void requestCalibration() { calibRequest.store(true); }
+    std::atomic<int> calibState{0};             // 0 idle, 1 measuring, 2 done (result in calibResultDb)
+    std::atomic<float> calibProgress{0.f}, calibNoiseDb{-120.f}, calibResultDb{-55.f};
+
+    void requestTestNote() { testNoteFlag.store(true); }
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -57,7 +73,11 @@ private:
 
     lpfd::Engine engine;
     std::vector<float> mono;
-    std::atomic<bool> clearFlag{false};
+    std::atomic<bool> clearFlag{false}, calibRequest{false}, testNoteFlag{false};
+    int64_t calibSamples = 0, calibTotal = 0;
+    float calibMax = -120.f;
+    float peakHold = -120.f;
+    int64_t peakAge = 0;
     bool wasBypassed = false;
 
     std::atomic<float>* pPatience = nullptr; std::atomic<float>* pInterruption = nullptr;

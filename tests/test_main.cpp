@@ -860,6 +860,55 @@ static void testMidiInput() {
     }
 }
 
+static void testTimelineAndPhase() {
+    std::printf("[timeline and phase for the display]\n");
+    Params p; p.patience = 0.6f; p.interruption = 0.f;
+    Engine e = makeEngine(p);
+    std::vector<float> sig((size_t)(SR * 6.0), 0.f);
+    for (auto& n : melody(0.2, 5, 0.25, 0.2, {60, 62, 64, 65, 67})) addTone(sig, n);   // ends ~1.4 s
+    Capture cap;
+    bool sawWaiting = false, sawListening = false, sawAnswering = false;
+    float maxProg = 0.f;
+    for (int64_t pos = 0; pos + 256 <= (int64_t)sig.size(); pos += 256) {
+        cap.base = pos;
+        e.process(sig.data() + pos, 256, Transport{}, cap);
+        sawListening |= e.phase() == Engine::Phase::Listening;
+        if (e.phase() == Engine::Phase::Waiting) { sawWaiting = true; maxProg = std::max(maxProg, e.waitProgress()); }
+        sawAnswering |= e.phase() == Engine::Phase::Answering;
+    }
+    CHECK(sawListening && sawWaiting && sawAnswering, "phases seen: listen %d wait %d answer %d", sawListening, sawWaiting, sawAnswering);
+    CHECK(maxProg > 0.8f, "wait progress reached %.2f", maxProg);
+    std::vector<TimelineEvent> tl(512);
+    const int n = e.timeline().read(tl.data(), 512);
+    int pOn = 0, aOn = 0, trig = 0;
+    for (int i = 0; i < n; ++i) {
+        pOn += tl[i].kind == TimelineEvent::PlayerOn;
+        aOn += tl[i].kind == TimelineEvent::AnswerOn;
+        if (tl[i].kind == TimelineEvent::Trigger) {
+            ++trig;
+            CHECK(tl[i].reason == TimelineEvent::Silence && tl[i].info > 0.5f, "trigger reason %d info %.2f", tl[i].reason, tl[i].info);
+        }
+    }
+    std::printf("  timeline: %d heard, %d answered, %d triggers; sent counter %llu\n", pOn, aOn, trig,
+                (unsigned long long)e.notesSent());
+    CHECK(pOn == 5 && trig == 1 && aOn == (int)ons(cap).size() && e.notesSent() == (uint64_t)aOn, "timeline counts");
+    // test note
+    e.requestTestNote();
+    Capture c2;
+    std::vector<float> z(256, 0.f);
+    c2.base = 0;
+    e.process(z.data(), 256, Transport{}, c2);
+    CHECK(!c2.ev.empty() && c2.ev[0].on && c2.ev[0].pitch == 60, "test note not sent");
+    // ring wrap: many events, reader stays consistent
+    Timeline t;
+    for (int i = 0; i < 5000; ++i) { TimelineEvent x; x.time = i; x.kind = TimelineEvent::PlayerOn; t.push(x); }
+    std::vector<TimelineEvent> r(3000);
+    const int m = t.read(r.data(), 3000);
+    bool inc = m > 0 && r[m - 1].time == 4999;
+    for (int i = 1; i < m; ++i) inc = inc && r[i].time == r[i - 1].time + 1;
+    CHECK(inc, "timeline wrap: %d events, consistent %d", m, inc);
+}
+
 int main() {
     testPitchAccuracy();
     testMelodyAndRepeats();
@@ -877,6 +926,7 @@ int main() {
     testHarmony();
     testRandomAndHumanize();
     testMidiInput();
+    testTimelineAndPhase();
     testNoAllocAndFuzz();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

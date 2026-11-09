@@ -147,6 +147,13 @@ void DialogueProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     wasBypassed = false;
     engine.setParams(readParams());
     if (clearFlag.exchange(false)) engine.requestClearMemory();
+    if (testNoteFlag.exchange(false)) engine.requestTestNote();
+    if (calibRequest.exchange(false)) {
+        calibSamples = 0;
+        calibTotal = (int64_t)(3.0 * getSampleRate());
+        calibMax = -120.f;
+        calibState.store(1);
+    }
 
     lpfd::Transport tr;
     if (auto* ph = getPlayHead()) {
@@ -184,6 +191,34 @@ void DialogueProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     if (thru) midi.addEvents(thruBuf, 0, -1, 0);
     // audio passes through untouched
 
+    // silence measurement: loudest short-term level over 3 s (the first 0.2 s ignored)
+    if (calibState.load() == 1) {
+        const int64_t skip = (int64_t)(0.2 * getSampleRate());
+        if (calibSamples >= skip) calibMax = juce::jmax(calibMax, engine.analyzer().levelDb());
+        calibSamples += total;
+        calibProgress.store((float)juce::jlimit(0.0, 1.0, (double)calibSamples / (double)juce::jmax<int64_t>(1, calibTotal)));
+        if (calibSamples >= calibTotal) {
+            const float noise = juce::jmax(-90.f, calibMax);
+            calibNoiseDb.store(noise);
+            calibResultDb.store(juce::jlimit(-80.f, -20.f, std::ceil(noise + 6.f)));
+            calibState.store(2);
+        }
+    }
+    {
+        const float lv = engine.analyzer().levelDb();
+        peakAge += total;
+        if (lv > peakHold || peakAge > (int64_t)(2.0 * getSampleRate())) { peakHold = lv; peakAge = 0; }
+        uiInputPeakDb.store(peakHold);
+    }
+    uiPhase.store((int)engine.phase());
+    uiWaitProgress.store(engine.waitProgress());
+    uiWaitRemaining.store(engine.waitRemainingSeconds());
+    uiSilenceWait.store((float)engine.silenceWaitSeconds());
+    uiHeardInPhrase.store(engine.heardInPhrase());
+    uiEventsNeeded.store(juce::jmin(99, engine.eventsNeeded()));
+    uiNotesSent.store(engine.notesSent());
+    uiNow.store(engine.now());
+    uiSampleRate.store(getSampleRate());
     uiMemory.store(engine.memorySize());
     uiHearing.store(engine.hearing());
     uiAnswering.store(engine.answering());

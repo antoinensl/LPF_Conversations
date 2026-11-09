@@ -11,11 +11,22 @@ Un plugin qui écoute ce que tu joues (n'importe quel son : guitare, voix, field
 - **Deux modes d'écoute** : Instrument, ou Bright pour les oiseaux et les voix.
 - **Entrée MIDI** : il écoute aussi un clavier ou un item MIDI, seul ou en même temps que l'audio. Hauteurs exactes, réponse sans latence, accords tenus reconnus exactement.
 
-Interface : skin brutaliste (papier, encre, une seule couleur signal, grille apparente, Space Mono). Chaque réglage est une case : on glisse horizontalement pour régler, la molette marche aussi, un double-clic remet la valeur par défaut. La gamme et l'accord détectés s'affichent en grand.
+## L'interface
+
+- **Premier lancement** : trois questions. Qu'allez-vous jouer ? (instrument, voix ou oiseaux, clavier MIDI, les deux). Apprenez-lui votre silence : il mesure 3 s de bruit de fond et règle le seuil juste au-dessus. Quel partenaire voulez-vous ? (six caractères prêts à jouer). L'accueil se rouvre depuis l'aide ou les trois pastilles du haut.
+- **L'état, en clair** : ÉCOUTE, ATTEND (avec le compte à rebours du silence avant qu'il réponde), RÉPOND, ou « à vous ». La mémoire, Figer et Effacer (avec confirmation) sont à côté.
+- **La conversation** : les 12 dernières secondes sur deux lignes, Vous et Lui, avec sous chaque réponse la raison pour laquelle il a parlé (« après 0,8 s de silence », « vous a coupé après 5 notes », « réflexe »).
+- **Ce qu'il entend** : vumètre avec le seuil en orange, bouton Mesurer le silence, note, gamme et accord détectés.
+- **Son caractère** : six caractères (Écho, Ping-pong, Partenaire, Contradicteur, Citations, Oiseau, raccourcis 1 à 6) et six curseurs posés comme des questions (« Quand répond-il ? », « Vous coupe-t-il la parole ? »…). Sous chaque curseur, une phrase dit ce qu'il fera.
+- **Réglages avancés** : écoute Instrument/Bright, sensibilité, tessiture sur une bande d'octaves, mémoire, citation, gamme, grille, source, canaux MIDI, MIDI thru.
+- **Branchement** (« Rien ne sort ? » en bas) : trois vérifications (son entrant, réponses envoyées dans la dernière minute, synthé), une note test, et les étapes pour Reaper, Ableton Live et la version autonome.
+- **Affichage et accessibilité** (gardé pour tous les projets) : thèmes Papier, Encre et Contraste max ; taille 100, 125 ou 150 % (la fenêtre grandit, rien n'est coupé ; on peut aussi tirer le coin) ; annonces pour les lecteurs d'écran (état, gamme et accord) ; cadre orange fixe pendant qu'il répond ; animations réduites ; formes en plus des couleurs.
+- **Clavier** : Tab / Maj+Tab pour passer d'un réglage à l'autre (cadre de focus visible), ← → pour régler, Maj pour le réglage fin, Suppr pour la valeur par défaut, Espace pour répondre oui/non, F pour figer, S pour mesurer le silence, 1 à 6 pour les caractères, ? pour l'aide, Échap pour fermer.
+- Texte en Atkinson Hyperlegible (police conçue pour la lisibilité), titres et valeurs en Space Mono. Contrastes ≥ 4,5:1 dans les trois thèmes ; l'orange vif ne sert qu'en fond.
 
 Formats : VST3, AU (macOS), Standalone. Le plugin laisse passer l'audio sans le modifier et ajoute une sortie MIDI.
 
-## Réglages
+## Les réglages (noms des paramètres dans l'hôte)
 
 | Réglage | Effet |
 |---|---|
@@ -86,14 +97,14 @@ JUCE 8 est téléchargé automatiquement (ou `-DLPFD_JUCE_DIR=/chemin/vers/JUCE`
 
 Le workflow GitHub Actions (`.github/workflows/build.yml`) compile pour macOS, Windows et Linux, lance les tests et publie une release à chaque tag `v*`. Les binaires ne sont pas signés : sur Mac, après téléchargement, lance `xattr -dr com.apple.quarantine "LPF Dialogue.vst3"` (idem pour le `.component` et l'app).
 
-Police : Space Mono (SIL Open Font License, `assets/fonts/OFL.txt`), intégrée au plugin.
+Polices : Atkinson Hyperlegible et Space Mono (SIL Open Font License, `assets/fonts/OFL-*.txt`), intégrées au plugin.
 
 Licence : JUCE 8 est sous AGPLv3 ou licence commerciale JUCE. Pour diffuser des binaires, publie ce code sous AGPLv3 ou prends une licence JUCE.
 
 ## Structure
 
 - `core/` : moteur sans dépendance (écoute, mémoire, génération, ordonnancement). Temps réel : aucune allocation, aucun verrou dans `process()`.
-- `plugin/` : emballage JUCE et interface (`BrutalLookAndFeel` : la skin).
+- `plugin/` : emballage JUCE et interface (`Ui.*` : thèmes, polices, réglages d'affichage, caractères ; `PluginEditor.*` : les écrans).
 - `tools/` : outil en ligne de commande.
 - `tests/` : tests sur signaux synthétiques : justesse, latence, modes de réactivité, politesse, tessiture, tonalité, grille, mode Bright (sifflements, trilles, glissandi, syllabes), accords et gammes, hasard et humanisation, équilibre note-on/note-off, absence d'allocation, fuzz.
 

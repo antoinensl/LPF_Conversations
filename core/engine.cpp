@@ -22,6 +22,8 @@ void Engine::reset() {
     for (auto& s : pool_) s.used = false;
     std::fill(soundId_, soundId_ + 128, 0u);
     harmony_ = Harmony();
+    timeline_.clear();
+    phase_ = Phase::Silence; notesSent_ = 0; testNoteRequested_ = false;
     midiQn_ = 0; heldCount_ = 0;
     std::fill(held_, held_ + 128, false);
     std::fill(echoHeld_, echoHeld_ + 128, false);
@@ -429,7 +431,7 @@ void Engine::schedule(int64_t t, uint32_t id, int pitch, int vel, bool on) {
     }
 }
 
-void Engine::trigger(int64_t t, const Transport& tr, int64_t blockStart) {
+void Engine::trigger(int64_t t, const Transport& tr, int64_t blockStart, int reason, float info) {
     float len = newEvents_ * p_.length;
     len *= 1.f + 0.5f * p_.randomness * rndSigned();
     const int n = std::clamp((int)std::lround(len), 1, kMaxAnswer);
@@ -450,7 +452,12 @@ void Engine::trigger(int64_t t, const Transport& tr, int64_t blockStart) {
         schedule(off, id, notes[i].pitch, 0, false);
         answerEnd_ = std::max(answerEnd_, off);
     }
-    if (k > 0) answering_ = true;
+    if (k > 0) {
+        answering_ = true;
+        TimelineEvent ev;
+        ev.time = t; ev.kind = TimelineEvent::Trigger; ev.reason = (uint8_t)reason; ev.info = info;
+        timeline_.push(ev);
+    }
 }
 
 void Engine::yieldAt(int64_t t) {
@@ -462,6 +469,13 @@ void Engine::yieldAt(int64_t t) {
 }
 
 void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStart) {
+    {
+        TimelineEvent ev;
+        ev.time = e.time;
+        ev.kind = e.type == HeardEvent::End ? TimelineEvent::PlayerOff : TimelineEvent::PlayerOn;
+        ev.pitch = (uint8_t)std::clamp((int)std::lround(e.pitch), 0, 127);
+        timeline_.push(ev);
+    }
     if (e.type == HeardEvent::End) {
         auto close = [&](auto& ring) {
             if (!ring.empty() && ring.last().dur <= 0.f)
@@ -501,7 +515,8 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
         (p_.interruption >= 1.f || rnd() < p_.interruption)) {
         // with randomness, it sometimes lets a chance to answer go by (and says more next time)
         if (!(p_.randomness > 0.f && rnd() < p_.randomness * 0.2f))
-            trigger(std::max(e.commitTime, blockStart), tr, blockStart);
+            trigger(std::max(e.commitTime, blockStart), tr, blockStart,
+                    eventsNeeded() <= 1 ? TimelineEvent::Reflex : TimelineEvent::Interjection, (float)newEvents_);
     }
 }
 
@@ -597,9 +612,16 @@ void Engine::emit(int64_t blockStart, int n, MidiSink& out) {
             out.noteOn(off, ch, s.pitch, s.vel);
             soundId_[s.pitch] = s.id;
             lastEmitOn_[s.pitch] = blockStart + off;
+            ++notesSent_;
+            TimelineEvent ev;
+            ev.time = blockStart + off; ev.kind = TimelineEvent::AnswerOn; ev.pitch = s.pitch;
+            timeline_.push(ev);
         } else if (soundId_[s.pitch] == s.id) {
             out.noteOff(off, ch, s.pitch);
             soundId_[s.pitch] = 0;
+            TimelineEvent ev;
+            ev.time = blockStart + off; ev.kind = TimelineEvent::AnswerOff; ev.pitch = s.pitch;
+            timeline_.push(ev);
         }
     }
     bool any = false;
@@ -637,6 +659,13 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
 
     const int64_t blockStart = now_;
     const bool useAudio = p_.source != 1, useMidi = p_.source != 0;
+    if (testNoteRequested_) {
+        testNoteRequested_ = false;
+        uint32_t id = nextId_++;
+        if (id == 0) id = nextId_++;
+        schedule(blockStart, id, 60, 100, true);
+        schedule(blockStart + (int64_t)(0.5 * sr_), id, 60, 0, false);
+    }
     analyzer_.process(in, n, blockStart);
 
     // MIDI in time order (stable), then merged with what the ears heard
@@ -672,7 +701,12 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
         if (useAudio) last = std::max(last, analyzer_.lastActiveTime());
         if (useMidi) last = std::max(last, midiLastActive_);
         const int64_t tSil = last + (int64_t)(silenceWaitSeconds() * sr_);
-        if (tSil < blockStart + n) trigger(std::max(tSil, blockStart), tr, blockStart);
+        if (tSil < blockStart + n)
+            trigger(std::max(tSil, blockStart), tr, blockStart, TimelineEvent::Silence, (float)silenceWaitSeconds());
+        else {
+            waitRemaining_ = (float)((tSil - (blockStart + n)) / sr_);
+            waitProgress_ = std::clamp(1.f - waitRemaining_ / (float)silenceWaitSeconds(), 0.f, 1.f);
+        }
     }
     {
         const float kk = std::exp(-(float)n / (float)(20.0 * sr_));
@@ -682,6 +716,11 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
 
     emit(blockStart, n, out);
     now_ += n;
+    if (answering_) phase_ = Phase::Answering;
+    else if (active) phase_ = Phase::Listening;
+    else if (newEvents_ > 0) phase_ = Phase::Waiting;
+    else phase_ = Phase::Silence;
+    if (phase_ != Phase::Waiting) { waitProgress_ = 0.f; waitRemaining_ = 0.f; }
     harmonyCountdown_ -= n;
     if (harmonyCountdown_ <= 0) {          // ~20 times a second, for the display
         harmonyCountdown_ = (int)(sr_ * 0.05);

@@ -1,7 +1,10 @@
 // LPF Dialogue — listens to audio, remembers, answers in MIDI.
 // prepare() allocates; process() is real-time safe.
 #pragma once
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 #include "analyzer.h"
 #include "memory.h"
 
@@ -62,6 +65,64 @@ public:
     virtual void noteOff(int sampleOffset, int channel, int pitch) = 0;
 };
 
+// What happened, for the conversation display. Written by the audio thread, read by the UI
+// (each entry is two atomics; a reader detects entries overwritten while it was reading).
+struct TimelineEvent {
+    enum Kind : uint8_t { PlayerOn, PlayerOff, AnswerOn, AnswerOff, Trigger };
+    enum Reason : uint8_t { Silence, Interjection, Reflex };
+    int64_t time = 0;   // samples
+    uint8_t kind = 0, pitch = 0, reason = 0;
+    float info = 0.f;   // Trigger: seconds waited (Silence) or notes heard (Interjection/Reflex)
+};
+
+class Timeline {
+public:
+    static constexpr int kSize = 2048;
+    Timeline() = default;
+    Timeline(const Timeline&) {}                                 // a copy starts empty
+    Timeline& operator=(const Timeline&) { clear(); return *this; }
+    void clear() { written_.store(0, std::memory_order_relaxed); }
+    void push(const TimelineEvent& e) {
+        const uint64_t n = written_.load(std::memory_order_relaxed);
+        Slot& s = slots_[n % kSize];
+        uint32_t infoBits;
+        std::memcpy(&infoBits, &e.info, 4);
+        s.a.store((uint64_t)e.time, std::memory_order_relaxed);
+        s.b.store((uint64_t)e.kind | (uint64_t)e.pitch << 8 | (uint64_t)e.reason << 16 | (uint64_t)infoBits << 32,
+                  std::memory_order_relaxed);
+        written_.store(n + 1, std::memory_order_release);
+    }
+    // Copies up to `max` of the most recent events, oldest first. Returns how many.
+    int read(TimelineEvent* out, int max) const {
+        const uint64_t end = written_.load(std::memory_order_acquire);
+        const uint64_t count = std::min<uint64_t>({end, (uint64_t)max, (uint64_t)kSize - 64});
+        const uint64_t begin = end - count;
+        for (uint64_t i = begin; i < end; ++i) {
+            const Slot& s = slots_[i % kSize];
+            TimelineEvent& e = out[i - begin];
+            e.time = (int64_t)s.a.load(std::memory_order_relaxed);
+            const uint64_t b = s.b.load(std::memory_order_relaxed);
+            e.kind = (uint8_t)b; e.pitch = (uint8_t)(b >> 8); e.reason = (uint8_t)(b >> 16);
+            const uint32_t infoBits = (uint32_t)(b >> 32);
+            std::memcpy(&e.info, &infoBits, 4);
+        }
+        // anything the writer may have lapped meanwhile is dropped
+        const uint64_t after = written_.load(std::memory_order_acquire);
+        const uint64_t safeFrom = after > (uint64_t)kSize - 64 ? after - ((uint64_t)kSize - 64) : 0;
+        if (safeFrom > begin) {
+            const uint64_t drop = std::min<uint64_t>(safeFrom - begin, count);
+            for (uint64_t i = drop; i < count; ++i) out[i - drop] = out[i];
+            return (int)(count - drop);
+        }
+        return (int)count;
+    }
+
+private:
+    struct Slot { std::atomic<uint64_t> a{0}, b{0}; };
+    Slot slots_[kSize];
+    std::atomic<uint64_t> written_{0};
+};
+
 struct GenNote {
     float time = 0.f;  // seconds from answer start
     float dur = 0.2f;
@@ -87,6 +148,16 @@ public:
     void allNotesOff(int sampleOffset, MidiSink& out);
 
     // For UI / tests
+    enum class Phase { Silence, Listening, Waiting, Answering };
+    Phase phase() const { return phase_; }
+    float waitProgress() const { return waitProgress_; }      // 0..1 while Waiting
+    float waitRemainingSeconds() const { return waitRemaining_; }
+    int heardInPhrase() const { return newEvents_; }
+    uint64_t notesSent() const { return notesSent_; }
+    const Timeline& timeline() const { return timeline_; }
+    void requestTestNote() { testNoteRequested_ = true; }
+    int outputChannel() const { return p_.channel; }
+
     int memorySize() const { return memory_.size(); }
     int64_t now() const { return now_; }
     bool hearing() const { return (p_.source != 1 && analyzer_.isActive()) || (p_.source != 0 && heldCount_ > 0); }
@@ -111,7 +182,7 @@ private:
     struct MidiIn { int offset; bool on; uint8_t ch, pitch, vel; };
     void onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStart);
     void onMidi(const MidiIn& m, const Transport& tr, int64_t blockStart);
-    void trigger(int64_t t, const Transport& tr, int64_t blockStart);
+    void trigger(int64_t t, const Transport& tr, int64_t blockStart, int reason = 0, float info = 0.f);
     void yieldAt(int64_t t);
     int64_t snapToGrid(int64_t t, const Transport& tr, int64_t blockStart) const;
     void schedule(int64_t t, uint32_t id, int pitch, int vel, bool on);
@@ -138,6 +209,11 @@ private:
     int lastChannel_ = 1;
     Harmony harmony_;
     int harmonyCountdown_ = 0;
+    Timeline timeline_;
+    Phase phase_ = Phase::Silence;
+    float waitProgress_ = 0.f, waitRemaining_ = 0.f;
+    uint64_t notesSent_ = 0;
+    bool testNoteRequested_ = false;
 
     // MIDI input
     MidiIn midiQ_[1024];
