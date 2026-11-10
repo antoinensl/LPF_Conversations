@@ -22,7 +22,9 @@ struct HeardEvent {
 struct AnalyzerSettings {
     float sensitivity = 0.5f;  // 0..1, onset detection
     float gateDb = -55.f;      // below this, silence
-    bool bright = false;       // false: instruments (55 Hz-2 kHz). true: birds, voices (100 Hz-10 kHz, fast)
+    bool bright = false;       // false: instruments (steady). true: birds, voices (fast, gliding)
+    float lowHz = 0.f;         // lowest fundamental it listens for; below, filtered out (rumble, wind).
+    float highHz = 0.f;        // highest fundamental. 0 = automatic: 55 Hz-2 kHz, or 100 Hz-10 kHz in bright mode
 };
 
 class Analyzer {
@@ -45,6 +47,9 @@ public:
     float levelDb() const { return levelDb_; }
     float lastPitch() const { return lastF0Midi_; }
     float lastConfidence() const { return lastConf_; }
+    // How far the note being played has moved from where it started (bends, vibrato, slides),
+    // in semitones. False when no pitched note sounds.
+    bool noteDeviation(float& semis) const;
 
     // Harmonic colour heard in the audio (works on chords too), normalised to sum 1.
     // longTerm = false: last ~1 s (chord), true: last ~20 s (key). Returns total weight.
@@ -75,6 +80,12 @@ private:
     float minIoiSec_ = 0.045f, legatoSemis_ = 0.8f, pitchWaitSec_ = 0.040f, maxMidi_ = 110.f;
     int legatoFrames_ = 3;
     bool modeBright_ = false;
+    float minMidi_ = 20.f;
+    // band filter in front of the analysis (12 dB/oct high-pass, 12 dB/oct low-pass)
+    struct Biquad { float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
+                    float run(float x) { const float y = b0 * x + z1; z1 = b1 * x - a1 * y + z2; z2 = b2 * x - a2 * y; return y; } };
+    Biquad hp_, lp_;
+    bool lpOn_ = false;
     void applyMode();
     // chroma
     void chromaAnalysis();
@@ -105,6 +116,9 @@ private:
     float candBase_ = 0.f;
     int candHops_ = 0;
     int64_t candOnsetTime_ = -1;
+    float centHist_[8] = {};     // spectral centroid of the last hops
+    int centPos_ = 0;
+    float candCentroid_ = 0.f, centSmooth_ = 0.f;
     float centroid_ = 0.f, flatness_ = 0.f;
 
     // pending/active note

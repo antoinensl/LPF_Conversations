@@ -100,9 +100,12 @@ struct Midi { int64_t t; bool on; int ch, pitch, vel; };
 struct Capture : MidiSink {
     std::vector<Midi> ev;
     int64_t base = 0;
-    Capture() { ev.reserve(100000); }
+    Capture() { ev.reserve(100000); bends.reserve(100000); }
     void noteOn(int o, int ch, int p, int v) override { ev.push_back({base + o, true, ch, p, v}); }
     void noteOff(int o, int ch, int p) override { ev.push_back({base + o, false, ch, p, 0}); }
+    struct Bend { int64_t t; int ch, v; };
+    std::vector<Bend> bends;
+    void pitchBend(int o, int ch, int v) override { bends.push_back({base + o, ch, v}); }
 };
 
 static Capture runEngine(Engine& e, std::vector<float> sig, int B = 256,
@@ -495,6 +498,8 @@ static void testNoAllocAndFuzz(uint32_t seed = 7) {
         p.rangeLow = 20 + (int)(u(rng) * 60); p.rangeHigh = p.rangeLow + (int)(u(rng) * 50);
         p.sensitivity = u(rng); p.grid = run % 4; p.channel = 1 + run % 16;
         p.bright = run % 3 == 1; p.randomness = u(rng); p.humanize = u(rng);
+        p.dynamics = u(rng); p.sustain = u(rng); p.bend = run % 2 ? u(rng) : 0.f; p.bendRange = run % 3 ? 2 : 12;
+        if (run % 4 == 3) { p.lowCutHz = 40.f + 400.f * u(rng); p.highCutHz = p.lowCutHz * (2.f + 30.f * u(rng)); }
         Engine e = makeEngine(p);
         std::vector<float> sig((size_t)(SR * 6.0), 0.f);
         for (int i = 0; i < 40; ++i) {
@@ -512,6 +517,8 @@ static void testNoAllocAndFuzz(uint32_t seed = 7) {
         std::string why;
         const bool ok = balanced(all, why);
         CHECK(ok, "fuzz run %d: %s", run, why.c_str());
+        CHECK(cap.bends.empty() || cap.bends.back().v == 8192, "fuzz run %d: pitch bend left at %d", run, cap.bends.back().v);
+        if (p.bend == 0.f) CHECK(cap.bends.empty(), "fuzz run %d: bends sent while off", run);
         if (!ok && std::getenv("LPFD_FUZZ_DEBUG")) {
             const int sp = std::atoi(why.c_str() + why.find_last_of(' ') + 1);
             for (auto& m : all.ev) if (m.pitch == sp) std::printf("    %10lld %s ch%d p%d v%d\n", (long long)m.t, m.on ? "ON " : "off", m.ch, m.pitch, m.vel);
@@ -922,6 +929,183 @@ static void testTimelineAndPhase() {
     CHECK(inc, "timeline wrap: %d events, consistent %d", m, inc);
 }
 
+// ---- v0.6: reactivity, detection band, expression ----
+static std::vector<float> pluckPhrase(const std::vector<int>& pitches, const std::vector<double>& amps, double step,
+                                      double t0 = 0.3) {
+    std::vector<float> sig((size_t)(SR * (t0 + step * pitches.size() + 3.0)), 0.f);
+    for (size_t i = 0; i < pitches.size(); ++i) {
+        const double hz = midiToHz(pitches[i]);
+        const int s0 = (int)((t0 + i * step) * SR);
+        const int len = (int)((step + 0.03) * SR);     // rings until the next pluck
+        for (int k = 0; k < len && s0 + k < (int)sig.size(); ++k) {
+            double v = 0;
+            for (int h = 1; h <= 8; ++h) v += std::sin(2 * M_PI * hz * h * k / SR) * std::exp(-k / SR * (1.5 + h * 0.8)) / h;
+            const double att = std::min(1.0, k / (0.002 * SR)), rel = k > len - 0.02 * SR ? (len - k) / (0.02 * SR) : 1.0;
+            sig[(size_t)(s0 + k)] += (float)(amps[i] * att * rel * v * 0.5);
+        }
+    }
+    return sig;
+}
+
+static void testReactivityV6() {
+    std::printf("[v0.6 reactivity: every note answered, re-plucks heard]\n");
+    // same note re-plucked while it rings, at the same loudness
+    {
+        std::vector<int> p(8, 57);
+        auto sig = pluckPhrase(p, std::vector<double>(8, 0.35), 0.22);
+        auto s = starts(analyse(sig));
+        std::printf("  8 re-plucks of A3 while ringing: %zu attacks heard\n", s.size());
+        CHECK(s.size() == 8, "re-plucks: %zu attacks for 8", s.size());
+    }
+    // "every note" + cut in half-way: every note answered straight away
+    for (float inter : {0.5f, 0.8f}) {
+        Params pr; pr.patience = 0.f; pr.interruption = inter; pr.humanize = 0.f; pr.randomness = 0.f;
+        Engine e = makeEngine(pr);
+        std::vector<int> mel = {52, 55, 57, 59, 62, 59, 57, 55, 52, 55, 57, 60};
+        auto sig = pluckPhrase(mel, std::vector<double>(mel.size(), 0.35), 0.22);
+        auto o = ons(runEngine(e, sig));
+        int quick = 0;
+        double worst = 0;
+        for (size_t i = 0; i < mel.size(); ++i) {
+            const double t = 0.3 + i * 0.22;
+            double best = 1e9;
+            for (auto& m : o) { const double d = m.t / SR - t; if (d >= 0 && d < best) best = d; }
+            if (best < 0.06) { ++quick; worst = std::max(worst, best); }
+        }
+        std::printf("  cut in %.0f %%: %d/%zu notes answered within 60 ms (worst %.0f ms)\n", inter * 100, quick, mel.size(), worst * 1000);
+        CHECK(quick == (int)mel.size(), "cut in %.0f %%: only %d/%zu answered at once", inter * 100, quick, mel.size());
+    }
+    // a phrase ending on a long ringing note: answers before the note has died away
+    {
+        Params pr; pr.patience = 0.6f; pr.interruption = 0.3f; pr.sustain = 0.f;   // needs 6 notes, hears 5
+        Engine e = makeEngine(pr);
+        std::vector<float> sig((size_t)(SR * 8.0), 0.f);
+        for (auto& n : melody(0.2, 4, 0.25, 0.2, {60, 62, 64, 65})) addTone(sig, n);
+        addTone(sig, {1.2, 4.0, midiToHz(67), 0.3});          // held 4 s
+        auto o = ons(runEngine(e, sig));
+        const double first = o.empty() ? 99.0 : o[0].t / SR;
+        std::printf("  last note held from 1.2 s to 5.2 s: answer at %.2f s\n", first);
+        CHECK(first > 1.25 && first < 2.6, "held note: answered at %.2f s", first);
+    }
+}
+
+static void testBandV6() {
+    std::printf("[v0.6 detection band]\n");
+    {
+        std::vector<float> sig((size_t)(SR * 1.0), 0.f);
+        addTone(sig, {0.2, 0.4, 98.0, 0.3});                  // G2
+        AnalyzerSettings st; st.lowHz = 150.f; st.highHz = 2000.f;
+        auto s = starts(analyse(sig, st));
+        bool heardG2 = false;
+        for (auto& e : s) if (e.pitched && std::fabs(e.pitch - 43.f) < 0.5f) heardG2 = true;
+        std::printf("  G2 (98 Hz) with low cut 150 Hz: %s\n", heardG2 ? "heard as G2" : "not heard as G2");
+        CHECK(!heardG2, "G2 heard below the low cut");
+        st.lowHz = 60.f;
+        s = starts(analyse(sig, st));
+        CHECK(s.size() == 1 && s[0].pitched && std::fabs(s[0].pitch - 43.f) < 0.3f, "G2 not heard with low cut 60 Hz");
+    }
+    {
+        std::vector<float> sig((size_t)(SR * 1.0), 0.f);
+        addSine(sig, 0.2, 0.3, 4000.0, 4000.0, 0.3);
+        AnalyzerSettings st; st.bright = true; st.highHz = 2500.f;
+        auto s = starts(analyse(sig, st));
+        bool at4k = false;
+        for (auto& e : s) if (e.pitched && std::fabs(e.pitch - 107.4f) < 1.f) at4k = true;
+        CHECK(!at4k, "4 kHz whistle pitched above the high cut");
+        st.highHz = 10000.f;
+        s = starts(analyse(sig, st));
+        CHECK(s.size() == 1 && s[0].pitched && std::fabs(s[0].pitch - 107.4f) < 0.4f, "4 kHz whistle missed with high cut 10 kHz");
+    }
+}
+
+static void testExpressionV6() {
+    std::printf("[v0.6 expression: dynamics, held notes, bends]\n");
+    // dynamics: soft and loud notes in turn
+    auto spread = [](float dyn) {
+        Params pr; pr.patience = 0.f; pr.interruption = 1.f; pr.dynamics = dyn; pr.humanize = 0.f; pr.contrast = 0.f;
+        Engine e = makeEngine(pr);
+        std::vector<float> sig((size_t)(SR * 6.0), 0.f);
+        std::vector<int> mel = {60, 62, 64, 65, 67, 65, 64, 62, 60, 62, 64, 65};
+        for (size_t i = 0; i < mel.size(); ++i) addTone(sig, {0.2 + i * 0.35, 0.25, midiToHz(mel[i]), i % 2 ? 0.4 : 0.04});
+        auto o = ons(runEngine(e, sig));
+        int lo = 127, hi = 0;
+        for (auto& m : o) { lo = std::min(lo, m.vel); hi = std::max(hi, m.vel); }
+        return std::make_pair(lo, hi);
+    };
+    auto d1 = spread(1.f), d0 = spread(0.f);
+    std::printf("  soft/loud playing: velocities %d..%d (dynamics 100 %%), %d..%d (0 %%)\n", d1.first, d1.second, d0.first, d0.second);
+    CHECK(d1.second - d1.first > 60, "dynamics: answers only span %d..%d", d1.first, d1.second);
+    CHECK(d0.second - d0.first < 20, "even dynamics: answers span %d..%d", d0.first, d0.second);
+
+    // held notes: short notes first, then one held 1.5 s
+    for (float sus : {1.f, 0.f}) {
+        Params pr; pr.patience = 0.f; pr.interruption = 1.f; pr.sustain = sus; pr.humanize = 0.f; pr.randomness = 0.f;
+        Engine e = makeEngine(pr);
+        std::vector<float> sig((size_t)(SR * 6.0), 0.f);
+        for (auto& n : melody(0.2, 6, 0.2, 0.1, {60, 62, 64, 62, 60, 62})) addTone(sig, n);
+        addTone(sig, {1.6, 1.5, midiToHz(64), 0.3});       // held until 3.1 s
+        auto cap = runEngine(e, sig);
+        // the answer started just after 1.6 s: when does it end?
+        int pitch = -1;
+        int64_t onT = 0, offT = 0;
+        for (auto& m : cap.ev)
+            if (m.on && m.t / SR > 1.6 && m.t / SR < 1.7 && pitch < 0) { pitch = m.pitch; onT = m.t; }
+            else if (!m.on && pitch >= 0 && m.pitch == pitch && m.t > onT && offT == 0) offT = m.t;
+        std::printf("  sustain %.0f %%: answer to the held note lasts %.2f s (yours 1.5 s)\n", sus * 100, (offT - onT) / SR);
+        if (sus > 0.5f) CHECK(std::fabs((offT - onT) / SR - 1.5) < 0.12, "held: answer lasted %.2f s", (offT - onT) / SR);
+        else CHECK((offT - onT) / SR < 0.6, "not held: answer lasted %.2f s", (offT - onT) / SR);
+        std::string why;
+        CHECK(balanced(cap, why), "held notes: %s", why.c_str());
+    }
+
+    // bends: MIDI pitch wheel and an audio bend, followed with pitch bend
+    {
+        Params pr; pr.source = 1; pr.patience = 0.f; pr.interruption = 1.f; pr.bend = 1.f; pr.bendRange = 2; pr.sustain = 1.f;
+        Engine e = makeEngine(pr);
+        Capture cap;
+        const int B = 256;
+        std::vector<float> z(B, 0.f);
+        int maxBend = 8192;
+        for (int64_t pos = 0; pos < (int64_t)(SR * 3.0); pos += B) {
+            const double t = pos / SR;
+            if (pos == (int64_t)(0.2 * SR) / B * B) e.addMidiInput(0, true, 1, 60, 100);
+            if (t > 0.5 && t < 1.0) e.addMidiPitchBend(0, 1, 8192 + (int)((t - 0.5) / 0.5 * 4096));   // up to +1 st
+            if (pos == (int64_t)(1.2 * SR) / B * B) e.addMidiInput(0, false, 1, 60, 0);
+            cap.base = pos;
+            e.process(z.data(), B, Transport{}, cap);
+        }
+        for (auto& b : cap.bends) maxBend = std::max(maxBend, b.v);
+        std::printf("  MIDI bend to +1 st: answer bent to %+.2f st, back to %d at the end\n", (maxBend - 8192) / 8192.0 * 2,
+                    cap.bends.empty() ? -1 : cap.bends.back().v);
+        CHECK(std::abs(maxBend - (8192 + 4096)) < 400, "MIDI bend followed to %d", maxBend);
+        CHECK(!cap.bends.empty() && cap.bends.back().v == 8192, "bend not reset");
+    }
+    {
+        Params pr; pr.patience = 0.f; pr.interruption = 1.f; pr.bend = 1.f; pr.bendRange = 2; pr.sustain = 1.f;
+        Engine e = makeEngine(pr);
+        std::vector<float> sig((size_t)(SR * 2.0), 0.f);
+        // A3 held 1 s, bent up a semitone and back... a guitar bend (half a semitone, slow)
+        const int s0 = (int)(0.2 * SR), len = (int)(1.0 * SR);
+        double ph = 0;
+        for (int i = 0; i < len; ++i) {
+            const double tt = (double)i / SR;
+            const double st = tt < 0.3 ? 0.0 : std::min(0.6, (tt - 0.3) * 2.0);
+            const double hz = 220.0 * std::pow(2.0, st / 12.0);
+            double v = 0;
+            for (int h = 1; h <= 6; ++h) v += std::sin(h * ph) / h;
+            sig[(size_t)(s0 + i)] = (float)(0.3 * std::min(1.0, i / (0.005 * SR)) * v * 0.6);
+            ph += 2 * M_PI * hz / SR;
+        }
+        auto cap = runEngine(e, sig);
+        int maxBend = 8192;
+        for (auto& b : cap.bends) maxBend = std::max(maxBend, b.v);
+        const double st = (maxBend - 8192) / 8192.0 * 2;
+        std::printf("  audio bend +0.6 st: answer bent to %+.2f st\n", st);
+        CHECK(std::fabs(st - 0.6) < 0.15, "audio bend followed to %+.2f st", st);
+        CHECK(!cap.bends.empty() && cap.bends.back().v == 8192, "audio bend not reset");
+    }
+}
+
 int main() {
     if (const char* n = std::getenv("LPFD_FUZZ_SEEDS")) {   // extra fuzzing: LPFD_FUZZ_SEEDS=200
         for (uint32_t sd = 1; sd <= (uint32_t)std::atoi(n); ++sd) testNoAllocAndFuzz(sd);
@@ -945,6 +1129,9 @@ int main() {
     testRandomAndHumanize();
     testMidiInput();
     testTimelineAndPhase();
+    testReactivityV6();
+    testBandV6();
+    testExpressionV6();
     testNoAllocAndFuzz();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

@@ -259,8 +259,11 @@ bool Slider::keyPressed(const juce::KeyPress& k) {
     else if (code == juce::KeyPress::homeKey) { setValue(range.getStart(), juce::sendNotificationSync); return true; }
     else if (code == juce::KeyPress::endKey) { setValue(range.getEnd(), juce::sendNotificationSync); return true; }
     if (dir == 0) return juce::Slider::keyPressed(k);
-    const double step = range.getLength() * (k.getModifiers().isShiftDown() ? 0.005 : 0.02);
-    double v = getValue() + dir * juce::jmax(step, getInterval());
+    // steps are a share of the slider's travel, so skewed ranges (Hz) move evenly
+    const double share = k.getModifiers().isShiftDown() ? 0.005 : 0.02;
+    const double prop = juce::jlimit(0.0, 1.0, valueToProportionOfLength(getValue()) + dir * share);
+    double v = proportionOfLengthToValue(prop);
+    if (getInterval() > 0.0 && std::abs(v - getValue()) < getInterval()) v = getValue() + dir * getInterval();
     setValue(juce::jlimit(range.getStart(), range.getEnd(), v), juce::sendNotificationSync);
     return true;
 }

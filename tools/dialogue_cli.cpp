@@ -160,6 +160,7 @@ struct Collect : MidiSink {
     int64_t base = 0;
     void noteOn(int o, int ch, int p, int v) override { ev.push_back({base + o, true, ch, p, v}); }
     void noteOff(int o, int ch, int p) override { ev.push_back({base + o, false, ch, p, 0}); }
+    void pitchBend(int o, int ch, int v) override { ev.push_back({base + o, false, ch, -1, v}); }   // pitch -1 = bend
 };
 
 static void writeVarLen(std::vector<uint8_t>& o, uint32_t v) {
@@ -180,6 +181,12 @@ static bool writeMidi(const char* path, const std::vector<Ev>& ev, double sr) {
         int64_t tick = (int64_t)std::llround(e.t * ticksPerSample);
         writeVarLen(trk, (uint32_t)std::max<int64_t>(0, tick - lastTick));
         lastTick = std::max(lastTick, tick);
+        if (e.pitch < 0) {   // pitch bend
+            trk.push_back((uint8_t)(0xE0 | ((e.ch - 1) & 15)));
+            trk.push_back((uint8_t)(e.vel & 0x7F));
+            trk.push_back((uint8_t)((e.vel >> 7) & 0x7F));
+            continue;
+        }
         trk.push_back((uint8_t)((e.on ? 0x90 : 0x80) | ((e.ch - 1) & 15)));
         trk.push_back((uint8_t)e.pitch);
         trk.push_back((uint8_t)(e.on ? e.vel : 64));
@@ -249,6 +256,12 @@ int main(int argc, char** argv) {
         else if (k == "--bright") p.bright = v > 0.5;
         else if (k == "--random") p.randomness = (float)v;
         else if (k == "--humanize") p.humanize = (float)v;
+        else if (k == "--lowcut") p.lowCutHz = (float)v;
+        else if (k == "--highcut") p.highCutHz = (float)v;
+        else if (k == "--dynamics") p.dynamics = (float)v;
+        else if (k == "--sustain") p.sustain = (float)v;
+        else if (k == "--bend") p.bend = (float)v;
+        else if (k == "--bendrange") p.bendRange = (int)v;
         else { std::fprintf(stderr, "unknown option %s\n", k.c_str()); return 2; }
     }
     std::vector<float> in;

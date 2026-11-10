@@ -31,6 +31,9 @@ void Engine::reset() {
     midiLastActive_ = -1000000; lastMidiStart_ = -1000000; lastMidiEventPitch_ = -1;
     std::fill(midiKeyHist_, midiKeyHist_ + 12, 0.f);
     std::fill(midiChordC_, midiChordC_ + 12, 0.f);
+    lastAttack_ = -1000000;
+    velLo_ = velHi_ = -1.f;
+    midiBendSemis_ = 0.f; bendSmooth_ = 0.f; lastBendOut_ = 8192;
 }
 
 void Engine::setParams(const Params& p) {
@@ -50,6 +53,10 @@ void Engine::setParams(const Params& p) {
     p_.humanize = std::clamp(p_.humanize, 0.f, 1.f);
     p_.source = std::clamp(p_.source, 0, 2);
     p_.midiInChannel = std::clamp(p_.midiInChannel, 0, 16);
+    p_.dynamics = std::clamp(p_.dynamics, 0.f, 1.f);
+    p_.sustain = std::clamp(p_.sustain, 0.f, 1.f);
+    p_.bend = std::clamp(p_.bend, 0.f, 1.f);
+    p_.bendRange = std::clamp(p_.bendRange, 1, 96);
 }
 
 float Engine::rnd() {
@@ -304,6 +311,10 @@ int Engine::generate(int n, GenNote* out, int cap) {
         prev = (int)std::lround(meanPitch);
     }
     meanIoi = nIoi ? meanIoi / nIoi : 0.3f;
+    // how loud you are playing right now (the last notes count most)
+    float nowVel = -1.f;
+    for (int64_t s = recent_.first(); s < recent_.count(); ++s)
+        nowVel = nowVel < 0.f ? recent_.at(s).velocity : 0.6f * nowVel + 0.4f * recent_.at(s).velocity;
 
     const float c = p_.contrast;
     const float center = 0.5f * (p_.rangeLow + p_.rangeHigh);
@@ -369,8 +380,9 @@ int Engine::generate(int n, GenNote* out, int cap) {
         if (i == n - 1) dur *= 1.f + 0.8f * h;                     // let the last note ring
         dur = std::clamp(dur, 0.03f, 4.f);
 
-        float vel = e.velocity;
+        float vel = nowVel >= 0.f ? 0.5f * (e.velocity + nowVel) : e.velocity;
         vel = vel + ((1.05f - vel) - vel) * c * 0.7f;
+        vel = 0.7f + (vel - 0.7f) * p_.dynamics;                   // 0 = even, 1 = like you
         const float arc = std::sin(3.14159265f * (i + 0.5f) / n);  // phrase shape
         vel *= 1.f + h * 0.3f * (arc - 0.5f);
         vel += h * 0.12f * rndSigned();
@@ -421,11 +433,12 @@ int64_t Engine::snapToGrid(int64_t t, const Transport& tr, int64_t blockStart) c
     return blockStart + (int64_t)std::llround((next - tr.ppqAtBlockStart) * spb);
 }
 
-void Engine::schedule(int64_t t, uint32_t id, int pitch, int vel, bool on) {
+void Engine::schedule(int64_t t, uint32_t id, int pitch, int vel, bool on, bool tied, int64_t onTime, int64_t plannedOff) {
     for (auto& s : pool_) {
         if (!s.used) {
             s.used = true; s.time = t; s.id = id;
             s.pitch = (uint8_t)pitch; s.vel = (uint8_t)vel; s.on = on;
+            s.tied = tied; s.onTime = onTime; s.plannedOff = plannedOff;
             return;
         }
     }
@@ -443,13 +456,21 @@ void Engine::trigger(int64_t t, const Transport& tr, int64_t blockStart, int rea
     const int k = generate(n, notes, kMaxAnswer);
     int freeSlots = 0;
     for (auto& s : pool_) if (!s.used) ++freeSlots;
+    // you are still holding your note: its last note may be held as long as yours
+    const bool tie = p_.sustain > 0.f && playerHolding() && rnd() < p_.sustain;
     for (int i = 0; i < k && freeSlots >= 2; ++i, freeSlots -= 2) {
         uint32_t id = nextId_++;
         if (id == 0) id = nextId_++;
         int64_t on = snapToGrid(t + (int64_t)(notes[i].time * sr_), tr, blockStart);
         int64_t off = on + std::max<int64_t>(1, (int64_t)(notes[i].dur * sr_));
         schedule(on, id, notes[i].pitch, notes[i].velocity, true);
-        schedule(off, id, notes[i].pitch, 0, false);
+        if (tie && i == k - 1) {
+            const int64_t cap = on + (int64_t)(8.0 * sr_);           // never hangs
+            schedule(cap, id, notes[i].pitch, 0, false, true, on, off);
+            off = cap;
+        } else {
+            schedule(off, id, notes[i].pitch, 0, false);
+        }
         answerEnd_ = std::max(answerEnd_, off);
     }
     if (k > 0) {
@@ -464,8 +485,22 @@ void Engine::yieldAt(int64_t t) {
     for (auto& s : pool_) {
         if (!s.used) continue;
         if (s.on && s.time >= t) s.used = false;
-        else if (!s.on && s.time > t) s.time = t;
+        else if (!s.on && s.time > t) { s.time = t; s.tied = false; }
     }
+}
+
+// you let go of your note (or played the next one): held answer notes let go too
+void Engine::releaseTied(int64_t t) {
+    const int64_t minLen = (int64_t)(0.03 * sr_);
+    for (auto& s : pool_) {
+        if (!s.used || s.on || !s.tied) continue;
+        s.tied = false;
+        s.time = s.onTime <= t ? std::max(t, s.onTime + minLen) : s.plannedOff;
+    }
+}
+
+bool Engine::playerHolding() const {
+    return (p_.source != 1 && analyzer_.isActive()) || (p_.source != 0 && heldCount_ > 0);
 }
 
 void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStart) {
@@ -477,6 +512,7 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
         timeline_.push(ev);
     }
     if (e.type == HeardEvent::End) {
+        releaseTied(e.time);
         auto close = [&](auto& ring) {
             if (!ring.empty() && ring.last().dur <= 0.f)
                 ring.last().dur = std::max(0.01f, (float)((e.time - lastStartTime_) / sr_));
@@ -488,10 +524,21 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
         return;
     }
 
+    releaseTied(e.time);
+    lastAttack_ = e.time;
     MemEvent m;
     m.pitch = e.pitch;
     m.pitched = e.pitched;
     m.velocity = e.velocity;
+    if (!e.midi) {
+        // spread your own range of attacks (which depends on mic, gain, instrument) over 0.2..1
+        const float v = e.velocity;
+        if (velLo_ < 0.f) velLo_ = velHi_ = v;
+        velHi_ = std::max(v, velHi_ - 0.01f);
+        velLo_ = std::min(v, velLo_ + 0.01f);
+        const float span = velHi_ - velLo_;
+        m.velocity = span > 0.08f ? 0.2f + 0.8f * (v - velLo_) / span : 0.6f;
+    }
     m.ioi = lastStartTime_ < 0 ? 0.25f
                                : std::min(4.f, (float)((e.time - lastStartTime_) / sr_));
     m.ioiClass = ioiClassOf(m.ioi);
@@ -511,8 +558,10 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
 
     if (answering_ && p_.interruption < 0.5f) yieldAt(e.commitTime);
 
+    // Interruption: from the middle of the slider up, it cuts in every time its patience
+    // allows; below, now and then (and it stops when you start again, see yieldAt).
     if (newEvents_ >= eventsNeeded() &&
-        (p_.interruption >= 1.f || rnd() < p_.interruption)) {
+        (p_.interruption >= 0.5f || rnd() < 2.f * p_.interruption)) {
         // with randomness, it sometimes lets a chance to answer go by (and says more next time)
         if (!(p_.randomness > 0.f && rnd() < p_.randomness * 0.2f))
             trigger(std::max(e.commitTime, blockStart), tr, blockStart,
@@ -525,6 +574,11 @@ void Engine::addMidiInput(int offset, bool on, int ch, int pitch, int vel) {
     if (on && vel <= 0) on = false;
     midiQ_[midiQn_++] = {std::max(0, offset), on, (uint8_t)std::clamp(ch, 1, 16), (uint8_t)pitch,
                          (uint8_t)std::clamp(vel, 0, 127)};
+}
+
+void Engine::addMidiPitchBend(int, int ch, int value) {
+    if (p_.midiInChannel != 0 && ch != p_.midiInChannel) return;
+    midiBendSemis_ = (float)(std::clamp(value, 0, 16383) - 8192) / 8192.f * 2.f;  // keyboards: +-2
 }
 
 void Engine::onMidi(const MidiIn& m, const Transport& tr, int64_t blockStart) {
@@ -545,7 +599,9 @@ void Engine::onMidi(const MidiIn& m, const Transport& tr, int64_t blockStart) {
         return;
     }
     // our own answer coming back (MIDI loop): ignore it
-    if (m.ch == p_.channel && (soundId_[p] != 0 || t - lastEmitOn_[p] < (int64_t)(0.05 * sr_))) {
+    // (an echo comes back within a block or two; a held answer note can last long, so a real
+    // note at the same pitch later on is yours)
+    if (m.ch == p_.channel && t - lastEmitOn_[p] < (int64_t)(0.1 * sr_)) {
         echoHeld_[p] = true;
         return;
     }
@@ -630,9 +686,27 @@ void Engine::emit(int64_t blockStart, int n, MidiSink& out) {
     answering_ = any;
 }
 
+void Engine::updateBend(int n, MidiSink& out) {
+    float target = 0.f, d = 0.f;
+    if (p_.source != 1 && analyzer_.noteDeviation(d)) target = std::fabs(d) < 0.08f ? 0.f : d;
+    if (p_.source != 0 && heldCount_ > 0 && std::fabs(midiBendSemis_) > 0.01f) target = midiBendSemis_;
+    const float a = 1.f - std::exp(-(float)n / (float)(0.012 * sr_));
+    bendSmooth_ += (target - bendSmooth_) * a;
+    bool sounding = false;
+    for (uint32_t id : soundId_) if (id) { sounding = true; break; }
+    int v = 8192;
+    if (p_.bend > 0.f && sounding)
+        v = std::clamp(8192 + (int)std::lround(bendSmooth_ * p_.bend / (float)p_.bendRange * 8192.f), 0, 16383);
+    if (std::abs(v - lastBendOut_) >= 16 || (v == 8192 && lastBendOut_ != 8192)) {
+        out.pitchBend(std::max(0, n - 1), p_.channel, v);
+        lastBendOut_ = v;
+    }
+}
+
 void Engine::allNotesOff(int sampleOffset, MidiSink& out) {
     for (int p = 0; p < 128; ++p)
         if (soundId_[p]) { out.noteOff(sampleOffset, lastChannel_, p); soundId_[p] = 0; }
+    if (lastBendOut_ != 8192) { out.pitchBend(sampleOffset, lastChannel_, 8192); lastBendOut_ = 8192; }
     for (auto& s : pool_) s.used = false;
     answering_ = false;
 }
@@ -655,6 +729,8 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
     as.sensitivity = p_.sensitivity;
     as.gateDb = p_.gateDb;
     as.bright = p_.bright;
+    as.lowHz = p_.lowCutHz;
+    as.highHz = p_.highCutHz;
     analyzer_.setSettings(as);
 
     const int64_t blockStart = now_;
@@ -708,6 +784,14 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
             waitProgress_ = std::clamp(1.f - waitRemaining_ / (float)silenceWaitSeconds(), 0.f, 1.f);
         }
     }
+    // a note left ringing (or held) at the end of a phrase: if it may cut in, it does not
+    // wait for the note to die away
+    if (newEvents_ > 0 && active && p_.interruption > 0.f && lastAttack_ > -1000000) {
+        const double wait = silenceWaitSeconds() + 0.25;
+        const int64_t tHeld = lastAttack_ + (int64_t)(wait * sr_);
+        if (tHeld < blockStart + n)
+            trigger(std::max(tHeld, blockStart), tr, blockStart, TimelineEvent::Held, (float)wait);
+    }
     {
         const float kk = std::exp(-(float)n / (float)(20.0 * sr_));
         const float kc = std::exp(-(float)n / (float)(1.0 * sr_));
@@ -715,6 +799,7 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
     }
 
     emit(blockStart, n, out);
+    updateBend(n, out);
     now_ += n;
     if (answering_) phase_ = Phase::Answering;
     else if (active) phase_ = Phase::Listening;

@@ -45,6 +45,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout DialogueProcessor::createLay
         p.push_back(std::make_unique<AudioParameterChoice>(ParameterID{"midiin", 1}, u8("Input channel"), ch, 0));
     }
     p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"thru", 1}, u8("MIDI thru"), false));
+    auto hz = [](const String& id, const String& name, float lo, float hi, float def) {
+        NormalisableRange<float> r(lo, hi);
+        r.setSkewForCentre(std::sqrt(lo * hi));      // logarithmic
+        return std::make_unique<AudioParameterFloat>(
+            ParameterID{id, 2}, name, r, def,
+            AudioParameterFloatAttributes().withStringFromValueFunction([](float v, int) {
+                return v >= 1000.f ? String(v / 1000.f, v >= 10000.f ? 0 : 1) + " kHz" : String(juce::roundToInt(v)) + " Hz";
+            }));
+    };
+    p.push_back(hz("lowcut", u8("Low cut"), 30.f, 1000.f, 55.f));
+    p.push_back(hz("highcut", u8("High cut"), 300.f, 12000.f, 2000.f));
+    auto pct2 = [](const String& id, const String& name, float def) {
+        return std::make_unique<AudioParameterFloat>(
+            ParameterID{id, 2}, name, NormalisableRange<float>(0.f, 1.f), def,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(juce::roundToInt(v * 100.f)) + " %"; }));
+    };
+    p.push_back(pct2("dynamics", u8("Dynamics"), 0.7f));
+    p.push_back(pct2("sustain", u8("Held notes"), 0.5f));
+    p.push_back(pct2("bend", u8("Bends"), 0.f));
+    p.push_back(std::make_unique<AudioParameterChoice>(
+        ParameterID{"bendrange", 2}, u8("Bend range"), StringArray{u8("±2"), u8("±12"), u8("±24"), u8("±48")}, 0));
     return {p.begin(), p.end()};
 }
 
@@ -74,6 +96,12 @@ DialogueProcessor::DialogueProcessor()
     pSource = apvts.getRawParameterValue("source");
     pMidiIn = apvts.getRawParameterValue("midiin");
     pThru = apvts.getRawParameterValue("thru");
+    pLowCut = apvts.getRawParameterValue("lowcut");
+    pHighCut = apvts.getRawParameterValue("highcut");
+    pDynamics = apvts.getRawParameterValue("dynamics");
+    pSustain = apvts.getRawParameterValue("sustain");
+    pBend = apvts.getRawParameterValue("bend");
+    pBendRange = apvts.getRawParameterValue("bendrange");
 }
 
 bool DialogueProcessor::isBusesLayoutSupported(const BusesLayout& l) const {
@@ -113,6 +141,13 @@ lpfd::Params DialogueProcessor::readParams() const {
     p.humanize = pHumanize->load();
     p.source = juce::roundToInt(pSource->load());
     p.midiInChannel = juce::roundToInt(pMidiIn->load());
+    p.lowCutHz = pLowCut->load();
+    p.highCutHz = pHighCut->load();
+    p.dynamics = pDynamics->load();
+    p.sustain = pSustain->load();
+    p.bend = pBend->load();
+    static const int ranges[] = {2, 12, 24, 48};
+    p.bendRange = ranges[juce::jlimit(0, 3, juce::roundToInt(pBendRange->load()))];
     return p;
 }
 
@@ -127,6 +162,9 @@ struct JuceSink : lpfd::MidiSink {
     void noteOff(int o, int ch, int p) override {
         buf.addEvent(juce::MidiMessage::noteOff(ch, p), offset + o);
     }
+    void pitchBend(int o, int ch, int v) override {
+        buf.addEvent(juce::MidiMessage::pitchWheel(ch, v), offset + o);
+    }
 };
 } // namespace
 
@@ -139,6 +177,8 @@ void DialogueProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         if ((msg.isNoteOn() || msg.isNoteOff()) && inNotes.size() < inNotes.capacity())
             inNotes.push_back({m.samplePosition, msg.isNoteOn(), msg.getChannel(), msg.getNoteNumber(),
                                (int)msg.getVelocity()});
+        else if (msg.isPitchWheel() && inNotes.size() < inNotes.capacity())
+            inNotes.push_back({m.samplePosition, false, msg.getChannel(), -1, msg.getPitchWheelValue()});
     }
     const bool thru = pThru->load() > 0.5f;
     thruBuf.clear();
@@ -184,8 +224,10 @@ void DialogueProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         if (tr.valid && start > 0) t2.ppqAtBlockStart += start * tr.bpm / (60.0 * getSampleRate());
         sink.offset = start;
         for (const auto& e : inNotes)
-            if (e.pos >= start && e.pos < start + n)
-                engine.addMidiInput(e.pos - start, e.on, e.ch, e.pitch, e.vel);
+            if (e.pos >= start && e.pos < start + n) {
+                if (e.pitch < 0) engine.addMidiPitchBend(e.pos - start, e.ch, e.vel);   // pitch wheel
+                else engine.addMidiInput(e.pos - start, e.on, e.ch, e.pitch, e.vel);
+            }
         engine.process(mono.data(), n, t2, sink);
     }
     if (thru) midi.addEvents(thruBuf, 0, -1, 0);
@@ -247,7 +289,19 @@ void DialogueProcessor::getStateInformation(juce::MemoryBlock& destData) {
 
 void DialogueProcessor::setStateInformation(const void* data, int sizeInBytes) {
     if (auto xml = getXmlFromBinary(data, sizeInBytes))
-        if (xml->hasTagName(apvts.state.getType())) apvts.replaceState(juce::ValueTree::fromXml(*xml));
+        if (xml->hasTagName(apvts.state.getType())) {
+            // sessions from before v0.6 have no detection band: give Bright its own
+            bool hasBand = false, bright = false;
+            for (auto* c : xml->getChildIterator()) {
+                if (c->getStringAttribute("id") == "lowcut") hasBand = true;
+                if (c->getStringAttribute("id") == "mode") bright = c->getDoubleAttribute("value") > 0.5;
+            }
+            apvts.replaceState(juce::ValueTree::fromXml(*xml));
+            if (!hasBand && bright) {
+                if (auto* lp = apvts.getParameter("lowcut")) lp->setValueNotifyingHost(lp->convertTo0to1(100.f));
+                if (auto* hp = apvts.getParameter("highcut")) hp->setValueNotifyingHost(hp->convertTo0to1(10000.f));
+            }
+        }
 }
 
 juce::AudioProcessorEditor* DialogueProcessor::createEditor() { return new DialogueEditor(*this); }

@@ -95,6 +95,131 @@ struct QSlider : juce::Component {
     }
 };
 
+// ------------------------------------------------------------------ detection band
+// Two handles on a logarithmic frequency axis: the lowest and highest pitch it listens for.
+// Each handle is a real (invisible) slider: Tab reaches it, arrows move it, a screen reader
+// reads it. The mouse is handled here so that both can be dragged on one track.
+static juce::String hzText(double v) {
+    return v >= 1000.0 ? juce::String(v / 1000.0, v >= 10000.0 ? 0 : 1) + " kHz" : juce::String(juce::roundToInt(v)) + " Hz";
+}
+
+struct FreqRange : juce::Component, private juce::Timer {
+    static constexpr double fMin = 30.0, fMax = 12000.0;
+    DialogueProcessor& proc;
+    ui::Slider lo, hi;
+    std::unique_ptr<SliderAtt> loAtt, hiAtt;
+    ui::Slider* dragging = nullptr;
+    float marker = 0.f;
+
+    explicit FreqRange(DialogueProcessor& p) : proc(p) {
+        setTitle(u8("Pitches it listens for"));
+        setFocusContainerType(FocusContainerType::focusContainer);
+        auto setup = [this](ui::Slider& s, const char* id, const juce::String& title, const juce::String& desc) {
+            addAndMakeVisible(s);
+            s.setAlpha(0.f);
+            s.setInterceptsMouseClicks(false, false);
+            s.setTitle(title);
+            s.setDescription(desc);
+            if (auto* prm = proc.apvts.getParameter(id)) s.defaultValue = prm->convertFrom0to1(prm->getDefaultValue());
+            s.textFromValueFunction = [](double v) { return hzText(v); };
+            s.onValueChange = [this] { resized(); repaint(); };
+        };
+        setup(lo, "lowcut", u8("Low cut"), u8("Lowest pitch it listens for. Below it, sounds are filtered out: rumble, wind, handling noise."));
+        setup(hi, "highcut", u8("High cut"), u8("Highest pitch it listens for."));
+        loAtt = std::make_unique<SliderAtt>(proc.apvts, "lowcut", lo);
+        hiAtt = std::make_unique<SliderAtt>(proc.apvts, "highcut", hi);
+        startTimerHz(15);
+    }
+
+    juce::Rectangle<int> track() const { return getLocalBounds().withTrimmedTop(26).withHeight(30).reduced(10, 0); }
+    float xOf(double hz) const {
+        const auto t = track();
+        return (float)t.getX() + (float)t.getWidth() * (float)(std::log(juce::jlimit(fMin, fMax, hz) / fMin) / std::log(fMax / fMin));
+    }
+    double hzOf(float x) const {
+        const auto t = track();
+        const double u = juce::jlimit(0.0, 1.0, (double)(x - (float)t.getX()) / juce::jmax(1, t.getWidth()));
+        return fMin * std::pow(fMax / fMin, u);
+    }
+    void resized() override {
+        const auto t = track();
+        lo.setBounds(juce::roundToInt(xOf(lo.getValue())) - 9, t.getY(), 18, t.getHeight());
+        hi.setBounds(juce::roundToInt(xOf(hi.getValue())) - 9, t.getY(), 18, t.getHeight());
+    }
+    void timerCallback() override {
+        if (!isShowing()) return;
+        const float m = proc.uiHearing.load() ? proc.uiPitch.load() : 0.f;
+        if (std::abs(m - marker) > 0.05f) { marker = m; repaint(); }
+    }
+    void mouseDown(const juce::MouseEvent& e) override {
+        const float x = (float)e.x;
+        dragging = std::abs(x - xOf(lo.getValue())) <= std::abs(x - xOf(hi.getValue())) ? &lo : &hi;
+        if (auto* prm = proc.apvts.getParameter(dragging == &lo ? "lowcut" : "highcut")) prm->beginChangeGesture();
+        mouseDrag(e);
+    }
+    void mouseDrag(const juce::MouseEvent& e) override {
+        if (!dragging) return;
+        double v = hzOf((float)e.x);
+        if (dragging == &lo) v = juce::jmin(v, hi.getValue() / 1.5);
+        else v = juce::jmax(v, lo.getValue() * 1.5);
+        dragging->setValue(v, juce::sendNotificationSync);
+    }
+    void mouseUp(const juce::MouseEvent&) override {
+        if (dragging)
+            if (auto* prm = proc.apvts.getParameter(dragging == &lo ? "lowcut" : "highcut")) prm->endChangeGesture();
+        dragging = nullptr;
+    }
+    void mouseDoubleClick(const juce::MouseEvent& e) override {
+        auto& s = std::abs((float)e.x - xOf(lo.getValue())) <= std::abs((float)e.x - xOf(hi.getValue())) ? lo : hi;
+        s.setValue(s.defaultValue, juce::sendNotificationSync);
+    }
+
+    void paint(juce::Graphics& g) override {
+        auto& L = lookOf(*this);
+        const auto& p = L.pal();
+        auto r = getLocalBounds();
+        auto head = r.removeFromTop(20);
+        ui::text(g, u8("Pitches it listens for"), head, L.body(15.f, true), p.fg);
+        ui::text(g, hzText(lo.getValue()) + u8(" – ") + hzText(hi.getValue()), head, L.mono(13.f), p.fg, juce::Justification::centredRight);
+        const auto t = track();
+        g.setColour(p.meterOff);
+        g.fillRect(t.reduced(0, 10));
+        const float x0 = xOf(lo.getValue()), x1 = xOf(hi.getValue());
+        g.setColour(p.fg);
+        g.fillRect(juce::Rectangle<float>(x0, (float)t.getY() + 10.f, x1 - x0, (float)t.getHeight() - 20.f));
+        // what it hears right now
+        if (marker > 0.f) {
+            const double hz = 440.0 * std::pow(2.0, (marker - 69.0) / 12.0);
+            const float xm = xOf(hz);
+            g.setColour(p.signal);
+            g.fillRect(xm - 1.5f, (float)t.getY() + 2.f, 3.f, (float)t.getHeight() - 4.f);
+        }
+        for (auto* s : {&lo, &hi}) {
+            const auto b = s->getBounds().toFloat().reduced(2.f, 0.f);
+            g.setColour(p.bg);
+            g.fillRect(b);
+            g.setColour(p.line);
+            g.drawRect(b, p.lineW);
+            g.fillRect(b.getCentreX() - 1.f, b.getY() + 7.f, 2.f, b.getHeight() - 14.f);
+        }
+        // axis
+        auto ticks = getLocalBounds().withTrimmedTop(t.getBottom() + 2).withHeight(16);
+        for (double f : {50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0}) {
+            const float x = xOf(f);
+            g.setColour(p.hair);
+            g.fillRect(x, (float)t.getBottom() - 2.f, 1.f, 4.f);
+            ui::text(g, f >= 1000.0 ? juce::String((int)(f / 1000)) + "k" : juce::String((int)f),
+                     juce::Rectangle<int>(juce::roundToInt(x) - 20, ticks.getY(), 40, 16), L.mono(10.5f), p.muted, juce::Justification::centred);
+        }
+        auto sent = getLocalBounds().withTrimmedTop(ticks.getBottom() + 4).withHeight(20);
+        ui::text(g, u8("Below ") + hzText(lo.getValue()) + u8(" it filters out rumble and wind. Notes above ")
+                    + hzText(hi.getValue()) + u8(" are not heard as pitches."),
+                 sent, L.body(13.f), p.fg);
+        g.setColour(p.hair);
+        g.fillRect(0, getHeight() - 1, getWidth(), 1);
+    }
+};
+
 // ------------------------------------------------------------------ header bits
 struct StepChip : juce::Button {
     juce::String num, label, value;
@@ -685,6 +810,7 @@ private:
                         const auto& t = trig[(size_t)gi];
                         juce::String why = t.reason == lpfd::TimelineEvent::Silence ? u8("after ") + fmtS(t.info) + u8(" of silence")
                                          : t.reason == lpfd::TimelineEvent::Reflex ? u8("reflex")
+                                         : t.reason == lpfd::TimelineEvent::Held ? u8("over your held note")
                                          : u8("cut in after ") + juce::String((int)t.info) + " notes";
                         const auto f = L.body(12.5f);
                         const int tw = (int)juce::GlyphArrangement::getStringWidth(f, why) + 4;
@@ -798,7 +924,7 @@ private:
     juce::Component character, advanced, routing;
     juce::OwnedArray<juce::TextButton> presetBtns;
     juce::OwnedArray<QSlider> charSliders;
-    juce::TextButton advancedBtn{u8("Advanced: ear, range, MIDI")};
+    juce::TextButton advancedBtn{u8("Advanced: ear, expression, MIDI")};
     int presetIndex = -1;
     View currentView = View::Character;
 
@@ -822,9 +948,9 @@ private:
                    + fmtS((float)(0.08 + 1.92 * std::pow(v, 1.5))) + u8(" of silence.");
         }));
         add(new QSlider(proc, "interruption", u8("Does it cut in?"), "Never", "Often", [](double v) {
-            return v < 0.15 ? u8("Never over you, and it stops if you start again.")
-                 : v < 0.5 ? u8("It sometimes cuts in, but stops if you start again.")
-                           : u8("It happily plays over you.");
+            return v < 0.03 ? u8("Never over you: it waits for a pause, and stops if you start again.")
+                 : v < 0.5 ? u8("It sometimes cuts in (") + juce::String(juce::roundToInt(v * 200)) + u8(" % of the time), but stops if you start again.")
+                           : u8("It answers as soon as its patience allows, even over you.");
         }));
         add(new QSlider(proc, "contrast", u8("How does it answer?"), "Imitates", "Contradicts", [](double v) {
             return v < 0.25 ? u8("It follows your register, rhythm and contour.")
@@ -902,7 +1028,8 @@ private:
     juce::Viewport advView;
     juce::Component advInner;
     juce::TextButton advBack{"Back"}, routeBack{"Back"};
-    std::unique_ptr<ui::Choice> earChoice, gridChoice, sourceChoice;
+    std::unique_ptr<ui::Choice> earChoice, gridChoice, sourceChoice, bendChoice;
+    std::unique_ptr<FreqRange> band;
     juce::OwnedArray<QSlider> advSliders;
     juce::ComboBox lowBox, highBox, inBox, outBox;
     std::unique_ptr<ComboAtt> inAtt;
@@ -966,13 +1093,39 @@ private:
         heading(u8("EAR"));
         earChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("mode"), u8("Listening type"),
                                                  juce::StringArray{"Instrument", "Bright"},
-                                                 juce::StringArray{u8("55 Hz – 2 kHz"), u8("Voice, birds · up to 10 kHz")});
+                                                 juce::StringArray{u8("Guitar, keys, bass · 55 Hz – 2 kHz"), u8("Voice, birds · 100 Hz – 10 kHz")});
+        // picking a listening type also sets its usual band (it can be moved afterwards)
+        earChoice->onPick = [this](int i) {
+            setParam(proc, "lowcut", i == 1 ? 100.f : 55.f);
+            setParam(proc, "highcut", i == 1 ? 10000.f : 2000.f);
+        };
         advInner.addAndMakeVisible(*earChoice);
+        band = std::make_unique<FreqRange>(proc);
+        advInner.addAndMakeVisible(*band);
         auto addQ = [this](QSlider* q) { advSliders.add(q); advInner.addAndMakeVisible(q); };
         addQ(new QSlider(proc, "sensitivity", u8("Attack sensitivity"), "Little", "A lot", [](double v) {
-            return v > 0.7 ? u8("Hears soft notes, but also finger noise.")
+            return v > 0.7 ? u8("Hears soft notes and re-plucks, but also finger noise.")
                  : v < 0.3 ? u8("Only clear attacks.") : u8("Balanced.");
         }));
+        heading(u8("EXPRESSION"));
+        addQ(new QSlider(proc, "dynamics", u8("Dynamics"), u8("Even"), u8("Like yours"), [](double v) {
+            return v < 0.1 ? u8("Every answer at the same strength.")
+                 : v < 0.6 ? u8("Softer when you play soft, a little.")
+                           : u8("Soft when you play soft, loud when you play loud.");
+        }));
+        addQ(new QSlider(proc, "sustain", u8("Held notes"), u8("Lets go"), u8("Holds with you"), [](double v) {
+            return v < 0.03 ? u8("Its notes keep their own length.")
+                 : v > 0.97 ? u8("While you hold a note, it holds its own, and lets go with you.")
+                            : u8("Often holds its note as long as you hold yours (") + juce::String(juce::roundToInt(v * 100)) + " %).";
+        }));
+        addQ(new QSlider(proc, "bend", u8("Bends and vibrato"), u8("Ignores"), u8("Follows"), [](double v) {
+            return v < 0.03 ? u8("Its notes stay straight.")
+                            : u8("Follows your bends and vibrato with pitch bend (") + juce::String(juce::roundToInt(v * 100)) + " %).";
+        }));
+        bendChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("bendrange"), u8("Your synth's bend range (semitones)"),
+                                                  juce::StringArray{u8("±2"), u8("±12"), u8("±24"), u8("±48")});
+        bendChoice->labelHeight = 24;
+        advInner.addAndMakeVisible(*bendChoice);
         heading(u8("RANGE OF ITS ANSWERS"));
         strip.proc = &proc;
         advInner.addAndMakeVisible(strip);
@@ -1034,7 +1187,13 @@ private:
         int hi = 0, li = 0;
         place(*headings[hi++], 28);
         place(*earChoice, 56);
+        place(*band, 100);
         place(*advSliders[0], 74);
+        place(*headings[hi++], 28);
+        place(*advSliders[1], 74);
+        place(*advSliders[2], 74);
+        place(*advSliders[3], 74);
+        place(*bendChoice, 70);
         place(*headings[hi++], 28);
         place(strip, 34);
         {
@@ -1044,9 +1203,9 @@ private:
         }
         place(*advLabels[li++], 20);
         place(*headings[hi++], 28);
-        place(*advSliders[1], 74);
-        place(*advSliders[2], 74);
-        place(*advSliders[3], 74);
+        place(*advSliders[4], 74);
+        place(*advSliders[5], 74);
+        place(*advSliders[6], 74);
         place(*gridChoice, 70);
         place(*headings[hi++], 28);
         place(*sourceChoice, 70);
@@ -1286,6 +1445,8 @@ private:
             c->onClick = [this, i] {
                 setParam(proc, "source", i == 2 ? 1.f : (i == 3 ? 2.f : 0.f));
                 setParam(proc, "mode", i == 1 ? 1.f : 0.f);
+                setParam(proc, "lowcut", i == 1 ? 100.f : 55.f);
+                setParam(proc, "highcut", i == 1 ? 10000.f : 2000.f);
                 syncWelcome();
             };
             welcome.addAndMakeVisible(c);

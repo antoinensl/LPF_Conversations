@@ -53,33 +53,61 @@ void Analyzer::prepare(double sampleRate) {
         binPc_[k] = (((int)r % 12) + 12) % 12;
         binW_[k] = (float)std::max(0.0, 1.0 - 2.0 * std::fabs(m - r)); // triangle: in tune counts most
     }
+    setSettings(settings_);
     applyMode();
     reset();
 }
 
-void Analyzer::setSettings(const AnalyzerSettings& s) {
-    const bool changed = s.bright != settings_.bright;
+void Analyzer::setSettings(const AnalyzerSettings& in) {
+    AnalyzerSettings s = in;
+    if (s.lowHz <= 0.f) s.lowHz = s.bright ? 100.f : 55.f;
+    if (s.highHz <= 0.f) s.highHz = s.bright ? 10000.f : 2000.f;
+    s.lowHz = std::clamp(s.lowHz, 30.f, 4000.f);
+    s.highHz = std::clamp(s.highHz, 100.f, 16000.f);
+    if (s.highHz < s.lowHz * 1.5f) s.highHz = s.lowHz * 1.5f;
+    const bool changed = s.bright != settings_.bright || s.lowHz != settings_.lowHz || s.highHz != settings_.highHz;
     settings_ = s;
     if (changed) applyMode();
 }
 
+bool Analyzer::noteDeviation(float& semis) const {
+    if (noteState_ != Active || !notePitched_ || lastConf_ < 0.8f || lastF0Midi_ <= 0.f) return false;
+    semis = std::clamp(lastF0Midi_ - notePitch_, -12.f, 12.f);
+    return true;
+}
+
 void Analyzer::applyMode() {
     modeBright_ = settings_.bright;
+    const float lo = settings_.lowHz, hi = std::min<float>(settings_.highHz, (float)(sr_ * 0.4));
+    // the pitch window must hold a couple of periods of the lowest note
+    const int needW = (int)(sr_ / lo) + 4;
     if (!modeBright_) {
         wEff_ = yinW_;
-        tauMinEff_ = std::max(2, (int)(sr_ / 2000.0));
-        tauMaxEff_ = std::min(yinW_ - 2, (int)(sr_ / 55.0));
         pitchEveryEff_ = 2;
         minIoiSec_ = 0.045f; legatoSemis_ = 0.8f; legatoFrames_ = 3;
-        pitchWaitSec_ = 0.040f; maxMidi_ = 110.f;
+        pitchWaitSec_ = 0.040f;
     } else {
-        wEff_ = yinW_ / 2;
-        tauMinEff_ = std::max(2, (int)(sr_ / 10000.0));
-        tauMaxEff_ = std::min(wEff_ - 2, (int)(sr_ / 100.0));
+        wEff_ = needW > yinW_ / 2 ? yinW_ : yinW_ / 2;
         pitchEveryEff_ = 1;
         minIoiSec_ = 0.015f; legatoSemis_ = 1.5f; legatoFrames_ = 2;
-        pitchWaitSec_ = 0.020f; maxMidi_ = 136.f;
+        pitchWaitSec_ = 0.020f;
     }
+    tauMinEff_ = std::max(2, (int)(sr_ / hi));
+    tauMaxEff_ = std::min(wEff_ - 2, (int)(sr_ / lo));
+    maxMidi_ = midiFromHz(hi) + 0.5f;
+    minMidi_ = midiFromHz(std::max(lo, (float)(sr_ / (wEff_ - 2)))) - 0.5f;
+    // high-pass a little under the lowest note (RBJ cookbook, Q = 0.707): rumble, wind, handling
+    auto design = [this](Biquad& f, float fc, bool high) {
+        const double w = 2.0 * M_PI * fc / sr_, c = std::cos(w), al = std::sin(w) / (2.0 * 0.7071);
+        const double a0 = 1.0 + al;
+        const double b0 = high ? (1.0 + c) / 2.0 : (1.0 - c) / 2.0;
+        const double b1 = high ? -(1.0 + c) : 1.0 - c;
+        f.b0 = (float)(b0 / a0); f.b1 = (float)(b1 / a0); f.b2 = (float)(b0 / a0);
+        f.a1 = (float)(-2.0 * c / a0); f.a2 = (float)((1.0 - al) / a0);
+    };
+    design(hp_, lo * 0.7f, true);
+    // (no low-pass: the attacks of the notes live in the highs)
+    lpOn_ = false;
     tauMin_ = tauMinEff_;
     tauMax_ = tauMaxEff_;
     const double hz = modeBright_ ? 8000.0 : 5000.0;
@@ -159,11 +187,13 @@ void Analyzer::reset() {
     std::fill(prevLogMag_.begin(), prevLogMag_.end(), 0.f);
     std::fill(prev2LogMag_.begin(), prev2LogMag_.end(), 0.f);
     std::fill(fluxHist_.begin(), fluxHist_.end(), 0.f);
+    hp_.z1 = hp_.z2 = lp_.z1 = lp_.z2 = 0.f;
     writePos_ = 0; written_ = 0; hopCount_ = 0; hopIndex_ = 0; fluxPos_ = 0;
     prevFlux_ = 0.f; lastOnset_ = -1000000;
     levelDb_ = prevLevelDb_ = -120.f;
     std::fill(slowHist_, slowHist_ + 8, -120.f);
     levelPos_ = 0; slowDb_ = -120.f; candTime_ = -1;
+    std::fill(centHist_, centHist_ + 8, 0.f); centPos_ = 0; candCentroid_ = 0.f; centSmooth_ = 0.f;
     noteState_ = Idle; pendCount_ = 0; deviateCount_ = 0;
     lastActive_ = -1000000; numEvents_ = 0;
     std::fill(chordC_, chordC_ + 12, 0.f);
@@ -184,6 +214,9 @@ void Analyzer::process(const float* in, int n, int64_t blockStart) {
     for (int i = 0; i < n; ++i) {
         float s = in[i];
         if (!std::isfinite(s)) s = 0.f;
+        s = hp_.run(s);
+        if (lpOn_) s = lp_.run(s);
+        if (!std::isfinite(s)) { hp_.z1 = hp_.z2 = lp_.z1 = lp_.z2 = 0.f; s = 0.f; }
         ring_[writePos_] = s;
         writePos_ = (writePos_ + 1) & ringMask_;
         ++written_;
@@ -250,16 +283,25 @@ void Analyzer::onsetAnalysis(int64_t frameEnd, bool& onset) {
     } else {
         // while something sounds, a spectral change only counts as a new attack
         // if the (slow) level rises shortly after it
+        float minCentroid = 1e9f;
+        for (float c : centHist_) minCentroid = std::min(minCentroid, c);
         if (fluxHit && candTime_ < 0 && spaced) {
             candTime_ = frameEnd; candBase_ = minRecent; candHops_ = 0;
+            candCentroid_ = minCentroid;
         }
         if (candTime_ >= 0) {
-            if (slowDb_ - candBase_ > 2.f) { onset = loud; candOnsetTime_ = candTime_; candTime_ = -1; }
+            // re-plucking the same note at the same loudness: no level rise, but the sound
+            // gets brighter again (the high partials had faded). Vibrato does not do that.
+            const bool brighter = flatness_ < 0.4f && candCentroid_ > 0.f && centSmooth_ > 1.35f * candCentroid_;
+            if (slowDb_ - candBase_ > 2.f || brighter) { onset = loud; candOnsetTime_ = candTime_; candTime_ = -1; }
             else if (++candHops_ > 6) candTime_ = -1;
         }
     }
     if (onset) lastOnset_ = frameEnd;
 
+    centSmooth_ += 0.4f * (centroid_ - centSmooth_);
+    centHist_[centPos_] = centSmooth_;
+    centPos_ = (centPos_ + 1) & 7;
     fluxHist_[fluxPos_] = flux;
     fluxPos_ = (fluxPos_ + 1) % (int)fluxHist_.size();
     prevFlux_ = flux;
@@ -391,14 +433,15 @@ void Analyzer::analyseFrame(int64_t frameEnd) {
 
     float f0 = 0.f, conf = 0.f;
     bool havePitch = false;
-    if (++hopIndex_ >= pitchEveryEff_) {
+    // while a new note waits for its pitch, look every hop: the answer comes sooner
+    if (++hopIndex_ >= pitchEveryEff_ || noteState_ == Pending) {
         hopIndex_ = 0;
         pitchAnalysis(f0, conf);
         havePitch = true;
         if (++chromaCount_ >= 4) { chromaCount_ = 0; chromaAnalysis(); }
         lastF0Midi_ = f0; lastConf_ = conf;
     }
-    const bool confident = havePitch && conf > 0.8f && f0 > 20.f && f0 < maxMidi_;
+    const bool confident = havePitch && conf > 0.8f && f0 > minMidi_ && f0 < maxMidi_;
     const int64_t onsetTime = (candOnsetTime_ >= 0 ? candOnsetTime_ : frameEnd) - hop_;
     const int64_t pitchWait = (int64_t)(pitchWaitSec_ * sr_);
     const int64_t settle = wEff_ / 2;

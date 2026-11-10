@@ -30,6 +30,13 @@ struct Params {
     float humanize = 0.f;       // 0 = machine .. 1 = loose timing, reaction delay, phrasing
     int source = 0;             // what it listens to: 0 = audio, 1 = MIDI, 2 = both
     int midiInChannel = 0;      // 0 = any channel, else 1..16
+    float lowCutHz = 0.f;       // pitches it listens for (0 = automatic for the listening mode)
+    float highCutHz = 0.f;
+    // expression
+    float dynamics = 0.7f;      // 0 = even velocity .. 1 = follows your dynamics (over your own range)
+    float sustain = 0.5f;       // chance that an answer note is held as long as you hold yours
+    float bend = 0.f;           // 0 = ignores your bends/vibrato .. 1 = follows them (pitch bend)
+    int bendRange = 2;          // synth's pitch bend range, semitones
 };
 
 // What the engine thinks you are playing in.
@@ -63,16 +70,17 @@ public:
     virtual ~MidiSink() = default;
     virtual void noteOn(int sampleOffset, int channel, int pitch, int velocity) = 0;
     virtual void noteOff(int sampleOffset, int channel, int pitch) = 0;
+    virtual void pitchBend(int /*sampleOffset*/, int /*channel*/, int /*value 0..16383, 8192 = centre*/) {}
 };
 
 // What happened, for the conversation display. Written by the audio thread, read by the UI
 // (each entry is two atomics; a reader detects entries overwritten while it was reading).
 struct TimelineEvent {
     enum Kind : uint8_t { PlayerOn, PlayerOff, AnswerOn, AnswerOff, Trigger };
-    enum Reason : uint8_t { Silence, Interjection, Reflex };
+    enum Reason : uint8_t { Silence, Interjection, Reflex, Held };
     int64_t time = 0;   // samples
     uint8_t kind = 0, pitch = 0, reason = 0;
-    float info = 0.f;   // Trigger: seconds waited (Silence) or notes heard (Interjection/Reflex)
+    float info = 0.f;   // Trigger: seconds waited (Silence, Held) or notes heard (Interjection/Reflex)
 };
 
 class Timeline {
@@ -144,6 +152,7 @@ public:
 
     // Incoming MIDI for the next process() call (offset within that block). Real-time safe.
     void addMidiInput(int sampleOffset, bool noteOn, int channel, int pitch, int velocity);
+    void addMidiPitchBend(int sampleOffset, int channel, int value);   // 0..16383
     void process(const float* monoIn, int n, const Transport& tr, MidiSink& out);
     void allNotesOff(int sampleOffset, MidiSink& out);
 
@@ -177,6 +186,8 @@ private:
         uint32_t id = 0;
         uint8_t pitch = 0, vel = 0;
         bool on = false, used = false;
+        bool tied = false;          // note-off waiting for you to let go of your note
+        int64_t onTime = 0, plannedOff = 0;
     };
 
     struct MidiIn { int offset; bool on; uint8_t ch, pitch, vel; };
@@ -184,8 +195,11 @@ private:
     void onMidi(const MidiIn& m, const Transport& tr, int64_t blockStart);
     void trigger(int64_t t, const Transport& tr, int64_t blockStart, int reason = 0, float info = 0.f);
     void yieldAt(int64_t t);
+    void releaseTied(int64_t t);
+    bool playerHolding() const;
+    void updateBend(int n, MidiSink& out);
     int64_t snapToGrid(int64_t t, const Transport& tr, int64_t blockStart) const;
-    void schedule(int64_t t, uint32_t id, int pitch, int vel, bool on);
+    void schedule(int64_t t, uint32_t id, int pitch, int vel, bool on, bool tied = false, int64_t onTime = 0, int64_t plannedOff = 0);
     void emit(int64_t blockStart, int n, MidiSink& out);
     float rnd();
     int foldToRange(int p) const;
@@ -214,6 +228,13 @@ private:
     float waitProgress_ = 0.f, waitRemaining_ = 0.f;
     uint64_t notesSent_ = 0;
     bool testNoteRequested_ = false;
+    int64_t lastAttack_ = -1000000;
+    // dynamics: the range of your attacks (audio), to spread answers over the whole velocity range
+    float velLo_ = -1.f, velHi_ = -1.f;
+    // bends
+    float midiBendSemis_ = 0.f;
+    float bendSmooth_ = 0.f;
+    int lastBendOut_ = 8192;
 
     // MIDI input
     MidiIn midiQ_[1024];

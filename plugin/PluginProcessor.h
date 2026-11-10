@@ -91,6 +91,9 @@ private:
     std::atomic<float>* pRandom = nullptr;   std::atomic<float>* pHumanize = nullptr;
     std::atomic<float>* pSource = nullptr;   std::atomic<float>* pMidiIn = nullptr;
     std::atomic<float>* pThru = nullptr;
+    std::atomic<float>* pLowCut = nullptr;   std::atomic<float>* pHighCut = nullptr;
+    std::atomic<float>* pDynamics = nullptr; std::atomic<float>* pSustain = nullptr;
+    std::atomic<float>* pBend = nullptr;     std::atomic<float>* pBendRange = nullptr;
     struct InNote { int pos; bool on; int ch, pitch, vel; };
     std::vector<InNote> inNotes;   // preallocated
     juce::MidiBuffer thruBuf;
