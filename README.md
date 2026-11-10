@@ -26,6 +26,39 @@ Un plugin qui écoute ce que tu joues (n'importe quel son : guitare, voix, field
 
 Formats : VST3, AU (macOS), Standalone. Le plugin laisse passer l'audio sans le modifier et ajoute une sortie MIDI.
 
+## Installer
+
+Télécharge l'archive de ton système dans la dernière release : https://github.com/antoinensl/LPF_Conversations/releases/latest
+
+**Ce que contient l'archive**
+
+| Fichier | À quoi il sert |
+|---|---|
+| `LPF Dialogue.vst3` | Le plugin, pour Reaper et les autres logiciels de musique. C'est le seul fichier indispensable. |
+| `LPF Dialogue.component` (Mac) | Le même plugin au format AU, pour Logic ou GarageBand. |
+| `LPF Dialogue.app` (Mac) / `LPF Dialogue.exe` (Windows) | L'application autonome : le plugin sans logiciel de musique. Pour Ableton Live (qui ne reçoit pas le MIDI d'un plugin), ou pour jouer directement vers un synthé ou le Move en USB. Facultative. |
+| `lpf_dialogue_cli` / `lpf_dialogue_cli.exe` | L'outil en ligne de commande (voir « Outil hors ligne » plus bas) : un WAV ou un MIDI en entrée, ses réponses en fichier MIDI. Facultatif. |
+| `README.md` | Ce mode d'emploi. |
+
+**Mac**
+
+1. Dézippe `LPF-Dialogue-macOS.zip`.
+2. Copie `LPF Dialogue.vst3` dans `~/Library/Audio/Plug-Ins/VST3` et `LPF Dialogue.component` dans `~/Library/Audio/Plug-Ins/Components`.
+3. Les fichiers ne sont pas signés : dans le Terminal, une fois par fichier,
+   `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"LPF Dialogue.vst3"` (pareil pour le `.component` et l'app).
+4. Dans Reaper : Options › Preferences › Plug-ins › VST › Re-scan.
+
+**Windows**
+
+1. Avant de décompresser : clic droit sur `LPF-Dialogue-Windows.zip` › Propriétés › cocher **Débloquer** › OK.
+2. Décompresse, puis copie le dossier `LPF Dialogue.vst3` en entier dans `C:\Program Files\Common Files\VST3` (Windows demande une autorisation administrateur).
+3. Dans Reaper : Options › Preferences › Plug-ins › VST : vérifie que ce dossier est dans la liste, puis **Re-scan**. Le plugin s'appelle « LPF Dialogue » (Life Pass Filter).
+4. L'application autonome n'est pas signée : au premier lancement, « Windows a protégé votre ordinateur » › **Informations complémentaires › Exécuter quand même**.
+5. Si un message parle de `VCRUNTIME140.dll` : installe le « Microsoft Visual C++ Redistributable » (x64) depuis le site de Microsoft.
+6. Pour Ableton Live : lance l'application autonome, envoie sa sortie MIDI vers un port virtuel **loopMIDI** (gratuit), et choisis ce port comme entrée MIDI de la piste du synthé dans Live.
+
+**Linux** : copie `LPF Dialogue.vst3` dans `~/.vst3`.
+
 ## Les réglages (noms des paramètres dans l'hôte)
 
 | Réglage | Effet |
@@ -95,7 +128,7 @@ ctest --test-dir build -C Release
 
 JUCE 8 est téléchargé automatiquement (ou `-DLPFD_JUCE_DIR=/chemin/vers/JUCE`). Sur Mac, la compilation est universelle (Apple Silicon et Intel). Les plugins sont dans `build/LPFDialogue_artefacts/Release/`. Copie le `.vst3` dans `~/Library/Audio/Plug-Ins/VST3` et le `.component` dans `~/Library/Audio/Plug-Ins/Components`.
 
-Le workflow GitHub Actions (`.github/workflows/build.yml`) compile pour macOS, Windows et Linux, lance les tests et publie une release à chaque tag `v*`. Les binaires ne sont pas signés : sur Mac, après téléchargement, lance `xattr -dr com.apple.quarantine "LPF Dialogue.vst3"` (idem pour le `.component` et l'app).
+Le workflow GitHub Actions (`.github/workflows/build.yml`) compile pour macOS, Windows et Linux et lance les tests. À chaque push sur main, il publie (ou met à jour) la release `v<version>`, avec le numéro de version lu dans `CMakeLists.txt` (`project(LPFDialogue VERSION …)`) : pour sortir une nouvelle version, on monte ce numéro. Les binaires ne sont pas signés (voir « Installer »).
 
 Polices : Atkinson Hyperlegible et Space Mono (SIL Open Font License, `assets/fonts/OFL-*.txt`), intégrées au plugin.
 
