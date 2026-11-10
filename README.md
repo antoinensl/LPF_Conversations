@@ -1,124 +1,124 @@
 # LPF Dialogue
 
-Un plugin qui écoute ce que tu joues (n'importe quel son : guitare, voix, field recording… ou du MIDI) et qui te répond en MIDI. Tout se passe en local, sans réseau ni IA distante.
+A plugin that listens to what you play (any sound: guitar, voice, field recordings… or MIDI) and answers you in MIDI. Everything runs locally: no network, no remote AI.
 
-- **Écoute** : attaques (flux spectral), hauteur (YIN), niveau, brillance, bruit. Les sons sans hauteur nette sont aussi entendus : leur brillance est traduite en hauteur.
-- **Mémoire** : retient ce que tu as joué (intervalles, rythmes, durées, nuances, notes utilisées).
-- **Réponse** : chaîne de Markov à ordre variable sur ton propre jeu. Elle peut citer ou recombiner, imiter ou contredire.
-- **Réactivité** : de « réflexe » (une réponse ~20 ms après chaque note) à « écoute » (il attend la fin de ta phrase), en passant par « il te coupe la parole ».
-- **Harmonie** : détecte la gamme (11 modes) et l'accord en cours, y compris sur des accords grattés. L'interface les affiche, et les notes inventées s'en servent.
-- **Jeu humain** : Hasard (notes inventées, ornements, silences, rythmes déplacés) et Humanisation (délai de réaction variable, micro-timing, phrasé).
-- **Deux modes d'écoute** : Instrument, ou Bright pour les oiseaux et les voix.
-- **Entrée MIDI** : il écoute aussi un clavier ou un item MIDI, seul ou en même temps que l'audio. Hauteurs exactes, réponse sans latence, accords tenus reconnus exactement.
+- **Listening**: onsets (spectral flux), pitch (YIN), level, brightness, noisiness. Sounds without a clear pitch are heard too: their brightness becomes a pitch.
+- **Memory**: remembers what you played (intervals, rhythms, durations, dynamics, notes used).
+- **Answers**: a variable-order Markov chain over your own playing. It can quote or recombine, imitate or contradict.
+- **Reactivity**: from "reflex" (an answer ~20 ms after each note) to "listening" (it waits for the end of your phrase), with "it cuts in" in between.
+- **Harmony**: detects the scale (11 modes) and the current chord, including strummed chords. The interface shows them, and invented notes use them.
+- **Human feel**: Randomness (invented notes, ornaments, rests, shifted rhythms) and Humanize (varying reaction delay, micro-timing, phrasing).
+- **Two listening modes**: Instrument, or Bright for birds and voices.
+- **MIDI input**: it also listens to a keyboard or a MIDI item, alone or together with audio. Exact pitches, zero-latency answers, held chords recognised exactly.
 
-## L'interface
+## The interface
 
-- **Premier lancement** : trois questions. Qu'allez-vous jouer ? (instrument, voix ou oiseaux, clavier MIDI, les deux). Apprenez-lui votre silence : il mesure 3 s de bruit de fond et règle le seuil juste au-dessus. Quel partenaire voulez-vous ? (six caractères prêts à jouer). L'accueil se rouvre depuis l'aide ou les trois pastilles du haut.
-- **L'état, en clair** : ÉCOUTE, ATTEND (avec le compte à rebours du silence avant qu'il réponde), RÉPOND, ou « à vous ». La mémoire, Figer et Effacer (avec confirmation) sont à côté.
-- **La conversation** : les 12 dernières secondes sur deux lignes, Vous et Lui, avec sous chaque réponse la raison pour laquelle il a parlé (« après 0,8 s de silence », « vous a coupé après 5 notes », « réflexe »).
-- **Ce qu'il entend** : vumètre avec le seuil en orange, bouton Mesurer le silence, note, gamme et accord détectés.
-- **Son caractère** : six caractères (Écho, Ping-pong, Partenaire, Contradicteur, Citations, Oiseau, raccourcis 1 à 6) et six curseurs posés comme des questions (« Quand répond-il ? », « Vous coupe-t-il la parole ? »…). Sous chaque curseur, une phrase dit ce qu'il fera.
-- **Réglages avancés** : écoute Instrument/Bright, sensibilité, tessiture sur une bande d'octaves, mémoire, citation, gamme, grille, source, canaux MIDI, MIDI thru.
-- **Branchement** (« Rien ne sort ? » en bas) : trois vérifications (son entrant, réponses envoyées dans la dernière minute, synthé), une note test, et les étapes pour Reaper, Ableton Live et la version autonome.
-- **Affichage et accessibilité** (gardé pour tous les projets) : thèmes Papier, Encre et Contraste max ; taille 100, 125 ou 150 % (la fenêtre grandit, rien n'est coupé ; on peut aussi tirer le coin) ; annonces pour les lecteurs d'écran (état, gamme et accord) ; cadre orange fixe pendant qu'il répond ; animations réduites ; formes en plus des couleurs.
-- **Clavier** : Tab / Maj+Tab pour passer d'un réglage à l'autre (cadre de focus visible), ← → pour régler, Maj pour le réglage fin, Suppr pour la valeur par défaut, Espace pour répondre oui/non, F pour figer, S pour mesurer le silence, 1 à 6 pour les caractères, ? pour l'aide, Échap pour fermer.
-- Texte en Atkinson Hyperlegible (police conçue pour la lisibilité), titres et valeurs en Space Mono. Contrastes ≥ 4,5:1 dans les trois thèmes ; l'orange vif ne sert qu'en fond.
+- **First run**: three questions. What will you play? (instrument, voice or birds, MIDI keyboard, both). Teach it your silence: it measures 3 s of room noise and sets the threshold just above it. What kind of partner do you want? (six ready-made characters). The welcome screen can be reopened from Help or from the three chips at the top.
+- **The state, in plain words**: LISTENING, WAITING (with a countdown of the silence before it answers), ANSWERING, or "your turn". Memory, Freeze and Clear (with confirmation) sit next to it.
+- **The conversation**: the last 12 seconds on two lanes, You and It, with the reason under each answer ("after 0.8 s of silence", "cut in after 5 notes", "reflex").
+- **What it hears**: level meter with the threshold in orange, a Measure silence button, the detected note, scale and chord.
+- **Its character**: six characters (Echo, Ping-pong, Partner, Contrarian, Quotes, Bird; shortcuts 1 to 6) and six sliders phrased as questions ("When does it answer?", "Does it cut in?"…). Under each slider, a sentence says what it will do.
+- **Advanced settings**: Instrument/Bright listening, sensitivity, answer range on an octave strip, memory, quoting, scale lock, grid, source, MIDI channels, MIDI thru.
+- **Routing check** ("Nothing coming out?" at the bottom): three checks (incoming sound, answers sent in the last minute, your synth), a test note, and the steps for Reaper, Ableton Live and the standalone app.
+- **Display and accessibility** (kept for all projects): Paper, Ink and Max contrast themes; 100, 125 or 150 % size (the window grows, nothing gets cut off; you can also drag the corner); screen-reader announcements (state, scale and chord); a steady orange frame while it answers; reduced motion; shapes as well as colours.
+- **Keyboard**: Tab / Shift+Tab to move between controls (visible focus frame), ← → to adjust, Shift for fine adjustment, Del for the default value, Space to turn answering on/off, F to freeze, S to measure silence, 1 to 6 for the characters, ? for help, Esc to close.
+- Text in Atkinson Hyperlegible (a typeface designed for legibility), titles and values in Space Mono. Contrast ≥ 4.5:1 in all three themes; the bright orange is only used as a background.
 
-Formats : VST3, AU (macOS), Standalone. Le plugin laisse passer l'audio sans le modifier et ajoute une sortie MIDI.
+Formats: VST3, AU (macOS), Standalone. The plugin passes audio through untouched and adds a MIDI output.
 
-## Installer
+## Install
 
-Télécharge l'archive de ton système dans la dernière release : https://github.com/antoinensl/LPF_Conversations/releases/latest
+Download the archive for your system from the latest release: https://github.com/antoinensl/LPF_Conversations/releases/latest
 
-**Ce que contient l'archive**
+**What's in the archive**
 
-| Fichier | À quoi il sert |
+| File | What it's for |
 |---|---|
-| `LPF Dialogue.vst3` | Le plugin, pour Reaper et les autres logiciels de musique. C'est le seul fichier indispensable. |
-| `LPF Dialogue.component` (Mac) | Le même plugin au format AU, pour Logic ou GarageBand. |
-| `LPF Dialogue.app` (Mac) / `LPF Dialogue.exe` (Windows) | L'application autonome : le plugin sans logiciel de musique. Pour Ableton Live (qui ne reçoit pas le MIDI d'un plugin), ou pour jouer directement vers un synthé ou le Move en USB. Facultative. |
-| `lpf_dialogue_cli` / `lpf_dialogue_cli.exe` | L'outil en ligne de commande (voir « Outil hors ligne » plus bas) : un WAV ou un MIDI en entrée, ses réponses en fichier MIDI. Facultatif. |
-| `README.md` | Ce mode d'emploi. |
+| `LPF Dialogue.vst3` | The plugin, for Reaper and other music software. The only file you really need. |
+| `LPF Dialogue.component` (Mac) | The same plugin in AU format, for Logic or GarageBand. |
+| `LPF Dialogue.app` (Mac) / `LPF Dialogue.exe` (Windows) | The standalone app: the plugin without any music software. For Ableton Live (which doesn't receive MIDI from a plugin), or to play straight into a synth or the Ableton Move over USB. Optional. |
+| `lpf_dialogue_cli` / `lpf_dialogue_cli.exe` | The command-line tool (see "Offline tool" below): a WAV or MIDI file in, its answers out as a MIDI file. Optional. |
+| `README.md` | This manual. |
 
 **Mac**
 
-1. Dézippe `LPF-Dialogue-macOS.zip`.
-2. Copie `LPF Dialogue.vst3` dans `~/Library/Audio/Plug-Ins/VST3` et `LPF Dialogue.component` dans `~/Library/Audio/Plug-Ins/Components`.
-3. Les fichiers ne sont pas signés : dans le Terminal, une fois par fichier,
-   `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"LPF Dialogue.vst3"` (pareil pour le `.component` et l'app).
-4. Dans Reaper : Options › Preferences › Plug-ins › VST › Re-scan.
+1. Unzip `LPF-Dialogue-macOS.zip`.
+2. Copy `LPF Dialogue.vst3` to `~/Library/Audio/Plug-Ins/VST3` and `LPF Dialogue.component` to `~/Library/Audio/Plug-Ins/Components`.
+3. The files are not signed. In Terminal, once per file:
+   `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"LPF Dialogue.vst3"` (same for the `.component` and the app).
+4. In Reaper: Options › Preferences › Plug-ins › VST › Re-scan.
 
 **Windows**
 
-1. Avant de décompresser : clic droit sur `LPF-Dialogue-Windows.zip` › Propriétés › cocher **Débloquer** › OK.
-2. Décompresse, puis copie le dossier `LPF Dialogue.vst3` en entier dans `C:\Program Files\Common Files\VST3` (Windows demande une autorisation administrateur).
-3. Dans Reaper : Options › Preferences › Plug-ins › VST : vérifie que ce dossier est dans la liste, puis **Re-scan**. Le plugin s'appelle « LPF Dialogue » (Life Pass Filter).
-4. L'application autonome n'est pas signée : au premier lancement, « Windows a protégé votre ordinateur » › **Informations complémentaires › Exécuter quand même**.
-5. Si un message parle de `VCRUNTIME140.dll` : installe le « Microsoft Visual C++ Redistributable » (x64) depuis le site de Microsoft.
-6. Pour Ableton Live : lance l'application autonome, envoie sa sortie MIDI vers un port virtuel **loopMIDI** (gratuit), et choisis ce port comme entrée MIDI de la piste du synthé dans Live.
+1. Before unzipping: right-click `LPF-Dialogue-Windows.zip` › Properties › tick **Unblock** › OK.
+2. Unzip, then copy the whole `LPF Dialogue.vst3` folder to `C:\Program Files\Common Files\VST3` (Windows asks for administrator permission).
+3. In Reaper: Options › Preferences › Plug-ins › VST: check that this folder is in the list, then **Re-scan**. The plugin is called "LPF Dialogue" (Life Pass Filter).
+4. The standalone app is not signed: on first launch, "Windows protected your PC" › **More info › Run anyway**.
+5. If a message mentions `VCRUNTIME140.dll`: install the "Microsoft Visual C++ Redistributable" (x64) from Microsoft's website.
+6. For Ableton Live: run the standalone app, send its MIDI output to a **loopMIDI** virtual port (free), and pick that port as the MIDI input of the synth track in Live.
 
-**Linux** : copie `LPF Dialogue.vst3` dans `~/.vst3`.
+**Linux**: copy `LPF Dialogue.vst3` to `~/.vst3`.
 
-## Les réglages (noms des paramètres dans l'hôte)
+## Settings (parameter names in the host)
 
-| Réglage | Effet |
+| Setting | Effect |
 |---|---|
-| **Patience** | 0 % : répond à chaque note. 100 % : attend ~2 s de silence. Entre les deux, il répond après quelques notes ou un court silence. |
-| **Interruption** | 0 % : ne parle jamais en même temps que toi et **se tait dès que tu reprends**. 100 % : répond dès que la patience est atteinte, même si tu joues encore. |
-| **Longueur** | Nombre de notes de la réponse par rapport à ce qu'il vient d'entendre (×0,25 à ×2). |
-| **Mémoire** | 0 % : ne se souvient que des 8 dernières notes. 100 % : des 4096 dernières. |
-| **Fidélité** | 0 % : recombine librement. 100 % : cite de longs fragments de ton jeu. |
-| **Contraste** | 0 % : imite. 100 % : s'oppose (autre registre, rythme inverse de ta densité, contour renversé, nuances opposées). |
-| **Tonalité** | Probabilité de rester dans la gamme détectée (ou dans les notes jouées, tant que la gamme n'est pas sûre). |
-| **Hasard** | Ajoute des notes inventées : notes de l'accord en début et fin de phrase, notes de la gamme ailleurs. Ajoute aussi des petites notes d'ornement, des silences, des rythmes déplacés, une longueur de réponse variable. Il laisse parfois passer une occasion de répondre, et en dit plus la fois suivante. |
-| **Humanisation** | Délai de réaction variable (court en mode réflexe, plus long quand il est patient), micro-timing (±25 ms au maximum), nuances en arc sur la phrase, durées qui varient, dernière note tenue. |
-| **Écoute** | **Instrument** : 55 Hz - 2 kHz, pour la guitare et les instruments. **Bright** : 100 Hz - 10 kHz, attaques séparées dès 15 ms (trilles), glissandi suivis note à note. Pour les oiseaux et la voix parlée ou chantée. |
-| **Note basse / haute** | Tessiture de la réponse (repli à l'octave). |
-| **Sensibilité / Seuil** | Détection des attaques. Mets le seuil juste au-dessus du bruit de fond (la barre du haut montre le niveau d'entrée et le seuil). |
-| **Grille** | Libre, ou réponses calées sur 1/4, 1/8, 1/16 quand le transport de l'hôte est en lecture. |
-| **Source** | Audio, MIDI, ou Audio + MIDI (par exemple guitare et clavier en même temps). |
-| **Entrée MIDI** | Canal écouté (Tous ou 1-16). |
-| **MIDI thru** | Renvoie aussi le MIDI reçu sur la sortie, mélangé aux réponses (mets alors les réponses sur un autre canal). |
-| **Canal sortie**, **Figer la mémoire**, **Répondre**, **Effacer la mémoire** | — |
+| **Patience** | 0 %: answers every note. 100 %: waits for ~2 s of silence. In between, it answers after a few notes or a short silence. |
+| **Interruption** | 0 %: never plays at the same time as you and **stops as soon as you start again**. 100 %: answers as soon as its patience is reached, even if you're still playing. |
+| **Length** | Number of notes in the answer relative to what it just heard (×0.25 to ×2). |
+| **Memory** | 0 %: only remembers the last 8 notes. 100 %: the last 4096. |
+| **Fidelity** | 0 %: recombines freely. 100 %: quotes long fragments of your playing. |
+| **Contrast** | 0 %: imitates. 100 %: opposes (other register, rhythm opposite to your density, inverted contour, opposite dynamics). |
+| **Scale lock** | Probability of staying in the detected scale (or in the notes you played, until the scale is certain). |
+| **Randomness** | Adds invented notes: chord tones at the start and end of phrases, scale notes elsewhere. Also adds grace notes, rests, shifted rhythms and a varying answer length. It sometimes lets a chance to answer go by, and says more the next time. |
+| **Humanize** | Varying reaction delay (short in reflex mode, longer when it's patient), micro-timing (±25 ms at most), dynamics arching over the phrase, varying durations, last note held. |
+| **Listening mode** | **Instrument**: 55 Hz - 2 kHz, for guitar and instruments. **Bright**: 100 Hz - 10 kHz, onsets separated from 15 ms (trills), glides followed note by note. For birds and spoken or sung voice. |
+| **Lowest note / Highest note** | Range of the answers (folded by octaves). |
+| **Sensitivity / Threshold** | Onset detection. Put the threshold just above the room noise (the meter shows the input level and the threshold). |
+| **Grid** | Free, or answers locked to 1/4, 1/8, 1/16 while the host transport is playing. |
+| **Source** | Audio, MIDI, or Audio + MIDI (for example guitar and keyboard together). |
+| **Input channel** | MIDI channel it listens to (All or 1-16). |
+| **MIDI thru** | Also sends the incoming MIDI to the output, mixed with the answers (then put the answers on another channel). |
+| **Output channel**, **Freeze memory**, **Answer**, **Clear memory** | — |
 
-Quelques réglages de départ :
-- **Ping-pong** : Patience 40 %, Interruption 0 %, Longueur ×1.
-- **Écho / contrepoint** : Patience 0 %, Interruption 100 %, Longueur ×1, Contraste 30 %.
-- **Il te coupe la parole** : Patience 50 %, Interruption 70 %.
-- **Il ne fait que citer** : Fidélité 100 %, Contraste 0 %, Tonalité 100 %, Hasard 0 %.
-- **Partenaire d'impro** : Patience 50 %, Interruption 30 %, Hasard 35 %, Humanisation 50 %, Tonalité 80 %.
-- **Oiseaux** : Écoute Bright, Note haute au maximum (les réponses sont repliées par octaves dans la tessiture), Tonalité 0 %, Seuil juste au-dessus du vent.
+Some starting points:
+- **Ping-pong**: Patience 40 %, Interruption 0 %, Length ×1.
+- **Echo / counterpoint**: Patience 0 %, Interruption 100 %, Length ×1, Contrast 30 %.
+- **It cuts in**: Patience 50 %, Interruption 70 %.
+- **Quotes only**: Fidelity 100 %, Contrast 0 %, Scale lock 100 %, Randomness 0 %.
+- **Improv partner**: Patience 50 %, Interruption 30 %, Randomness 35 %, Humanize 50 %, Scale lock 80 %.
+- **Birds**: Bright listening, Highest note at maximum (answers are folded by octaves into the range), Scale lock 0 %, Threshold just above the wind.
 
-## Brancher dans Reaper
+## Routing in Reaper
 
-1. Piste 1 (ton instrument ou ton micro, monitoring activé) : insère **LPF Dialogue**.
-2. Piste 2 : ton synthé (ou LPF Granu, un sampler…).
-3. Envoi de la piste 1 vers la piste 2 : bouton Route → *Add new send* → audio **None**, MIDI **All → All**.
-4. Joue.
+1. Track 1 (your instrument or mic, monitoring on): insert **LPF Dialogue**.
+2. Track 2: your synth (or LPF Granu, a sampler…).
+3. Send from track 1 to track 2: Route button → *Add new send* → audio **None**, MIDI **All → All**.
+4. Play.
 
-**En MIDI** : mets Source sur MIDI. La piste 1 reçoit ton clavier (armée, monitoring actif) ou contient un item MIDI. L'envoi vers la piste 2 reste le même. Avec MIDI thru, une seule piste de synthé peut jouer ton clavier et les réponses ; mets alors les réponses sur un autre canal de sortie si tu veux les séparer.
+**With MIDI**: set Source to MIDI. Track 1 receives your keyboard (armed, monitoring on) or holds a MIDI item. The send to track 2 stays the same. With MIDI thru, a single synth track can play both your keyboard and the answers; put the answers on another output channel if you want to keep them apart.
 
-En MIDI, les notes jouées ensemble (à moins de 30 ms) comptent comme un seul évènement mélodique, la note du haut. Toutes les notes servent à reconnaître l'accord. Si ses réponses reviennent vers lui (boucle MIDI), il les reconnaît et les ignore. Un vrai clavier sur le même canal et la même note qu'une réponse en train de sonner serait aussi ignoré : mieux vaut des canaux différents.
+In MIDI, notes played together (within 30 ms) count as one melodic event, the top note. All notes are used to recognise the chord. If its answers come back to it (MIDI loop), it recognises and ignores them. A real keyboard note on the same channel and pitch as an answer that is still sounding would be ignored too, so separate channels are better.
 
-Dans **Ableton Live**, un VST ne peut pas envoyer de MIDI vers une autre piste. Lance alors la version **Standalone** avec sa sortie MIDI vers un bus virtuel (IAC sur Mac), que Live reçoit comme un clavier. Un device Max for Live est une piste pour plus tard.
+In **Ableton Live**, a VST can't send MIDI to another track. Run the **Standalone** app instead, with its MIDI output going to a virtual bus (IAC on Mac, loopMIDI on Windows), which Live receives like a keyboard. A Max for Live device is an idea for later.
 
-## Standalone → Ableton Move ou autre machine
+## Standalone → Ableton Move or another machine
 
-La version Standalone écoute l'entrée de ta carte son et/ou une entrée MIDI. Dans *Options → Audio/MIDI Settings*, choisis l'**entrée MIDI** (ton clavier) et la **sortie MIDI** : le Move branché en USB, un bus IAC, etc. Par défaut, JUCE coupe l'entrée audio en standalone pour éviter le larsen (bandeau jaune) : réactive-la si tu écoutes au casque.
+The standalone app listens to your audio interface input and/or a MIDI input. In *Options → Audio/MIDI Settings*, pick the **MIDI input** (your keyboard) and the **MIDI output**: the Move over USB, an IAC bus, etc. By default JUCE mutes the audio input in standalone mode to avoid feedback (yellow banner): turn it back on if you're using headphones.
 
-Attention au larsen musical : si le synthé qui répond s'entend dans le micro, le plugin finira par se répondre à lui-même. Utilise un casque, ou monte le seuil.
+Watch out for musical feedback: if the answering synth can be heard in the mic, the plugin will end up answering itself. Use headphones, or raise the threshold.
 
-## Outil hors ligne
+## Offline tool
 
-`lpf_dialogue_cli` passe un fichier WAV **ou MIDI** (.mid, format 0/1, changements de tempo gérés) dans le moteur et écrit les réponses dans un fichier MIDI. Il peut aussi faire un aperçu stéréo : ton jeu à gauche, la réponse jouée par un petit synthé à droite.
+`lpf_dialogue_cli` runs a WAV **or MIDI** file (.mid, format 0/1, tempo changes supported) through the engine and writes the answers to a MIDI file. It can also render a stereo preview: your playing on the left, the answers played by a small synth on the right.
 
 ```
-lpf_dialogue_cli phrase.wav reponse.mid --render apercu.wav --patience 0.6 --interruption 0 --contrast 0.3
+lpf_dialogue_cli phrase.wav answers.mid --render preview.wav --patience 0.6 --interruption 0 --contrast 0.3
 ```
 
-Options : `--patience --interruption --length --memory --fidelity --contrast --scale --low --high --sensitivity --gate --seed --bright 1 --random --humanize`. L'outil affiche aussi la gamme et le dernier accord détectés.
+Options: `--patience --interruption --length --memory --fidelity --contrast --scale --low --high --sensitivity --gate --seed --bright 1 --random --humanize`. The tool also prints the detected scale and the last chord.
 
-## Compiler
+## Build
 
 ```
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -126,34 +126,36 @@ cmake --build build --config Release
 ctest --test-dir build -C Release
 ```
 
-JUCE 8 est téléchargé automatiquement (ou `-DLPFD_JUCE_DIR=/chemin/vers/JUCE`). Sur Mac, la compilation est universelle (Apple Silicon et Intel). Les plugins sont dans `build/LPFDialogue_artefacts/Release/`. Copie le `.vst3` dans `~/Library/Audio/Plug-Ins/VST3` et le `.component` dans `~/Library/Audio/Plug-Ins/Components`.
+JUCE 8 is downloaded automatically (or use `-DLPFD_JUCE_DIR=/path/to/JUCE`). On Mac the build is universal (Apple Silicon and Intel). The plugins end up in `build/LPFDialogue_artefacts/Release/`.
 
-Le workflow GitHub Actions (`.github/workflows/build.yml`) compile pour macOS, Windows et Linux et lance les tests. À chaque push sur main, il publie (ou met à jour) la release `v<version>`, avec le numéro de version lu dans `CMakeLists.txt` (`project(LPFDialogue VERSION …)`) : pour sortir une nouvelle version, on monte ce numéro. Les binaires ne sont pas signés (voir « Installer »).
+The GitHub Actions workflow (`.github/workflows/build.yml`) builds for macOS, Windows and Linux and runs the tests. On every push to main it publishes (or updates) the release `v<version>`, with the version number read from `CMakeLists.txt` (`project(LPFDialogue VERSION …)`): to ship a new version, bump that number. The binaries are not signed (see "Install").
 
-Polices : Atkinson Hyperlegible et Space Mono (SIL Open Font License, `assets/fonts/OFL-*.txt`), intégrées au plugin.
+Extra fuzzing: `LPFD_FUZZ_SEEDS=40 ./build/lpfd_tests` runs the fuzz test with 40 random seeds.
 
-Licence : JUCE 8 est sous AGPLv3 ou licence commerciale JUCE. Pour diffuser des binaires, publie ce code sous AGPLv3 ou prends une licence JUCE.
+Fonts: Atkinson Hyperlegible and Space Mono (SIL Open Font License, `assets/fonts/OFL-*.txt`), embedded in the plugin.
 
-## Structure
+License: JUCE 8 is available under AGPLv3 or a commercial JUCE licence. To distribute binaries, publish this code under AGPLv3 or get a JUCE licence.
 
-- `core/` : moteur sans dépendance (écoute, mémoire, génération, ordonnancement). Temps réel : aucune allocation, aucun verrou dans `process()`.
-- `plugin/` : emballage JUCE et interface (`Ui.*` : thèmes, polices, réglages d'affichage, caractères ; `PluginEditor.*` : les écrans).
-- `tools/` : outil en ligne de commande.
-- `tests/` : tests sur signaux synthétiques : justesse, latence, modes de réactivité, politesse, tessiture, tonalité, grille, mode Bright (sifflements, trilles, glissandi, syllabes), accords et gammes, hasard et humanisation, équilibre note-on/note-off, absence d'allocation, fuzz.
+## Layout
 
-## Mesures (tests, 44,1 kHz)
+- `core/`: dependency-free engine (listening, memory, generation, scheduling). Real-time safe: no allocation, no locks in `process()`.
+- `plugin/`: JUCE wrapper and interface (`Ui.*`: themes, fonts, display settings, characters; `PluginEditor.*`: the screens).
+- `tools/`: command-line tool.
+- `tests/`: tests on synthetic signals: pitch accuracy, latency, reactivity modes, politeness, range, scale lock, grid, Bright mode (whistles, trills, glides, syllables), chords and scales, randomness and humanize, MIDI input, note-on/note-off balance, no allocation, fuzzing.
 
-- Hauteur juste à ±0,06 demi-ton de 82 Hz à 1,3 kHz. Attaque datée à 0,3 ms près.
-- Note confirmée 20 ms après l'attaque (32 à 38 ms pour les notes graves de guitare, en dessous de 110 Hz).
-- Mode réflexe : réponse au plus 21 ms après la note entendue (35 ± 13 ms avec Humanisation à 100 %).
-- Bright : sifflements de 2,5 à 9 kHz justes à ±0,2 demi-ton, note confirmée en ~7 ms. Trille de 14 notes de 30 ms entièrement entendue (le mode Instrument n'en entend que 9). Glissando 2 → 4 kHz suivi en 7 notes montantes.
-- MIDI : réponse réflexe sur la même trame que la note reçue (0 ms). Accord tenu C-E-G-Bb reconnu C7. Boucle MIDI sans auto-dialogue. Filtre de canal, mélange audio + MIDI, attente des touches relâchées en mode écoute. MIDI thru vérifié dans un hôte VST3.
-- Accords grattés reconnus : C, Am, G7, Fmaj7, plus un changement C → G. Arpège Am7 reconnu. Gammes reconnues : Ré dorien, La mineur harmonique, penta mineure.
-- Validé par pluginval (niveau 10, éditeur compris). Sortie MIDI vérifiée dans un hôte VST3.
+## Measurements (tests, 44.1 kHz)
 
-## Limites actuelles / pistes
+- Pitch accurate to ±0.06 semitone from 82 Hz to 1.3 kHz. Onsets timed to within 0.3 ms.
+- Note confirmed 20 ms after the attack (32 to 38 ms for low guitar notes, below 110 Hz).
+- Reflex mode: answer at most 21 ms after the note it heard (35 ± 13 ms with Humanize at 100 %).
+- Bright: whistles from 2.5 to 9 kHz accurate to ±0.2 semitone, note confirmed in ~7 ms. A 14-note trill of 30 ms notes fully heard (Instrument mode hears only 9). A 2 → 4 kHz glide followed as 7 rising notes.
+- MIDI: reflex answer in the same block as the incoming note (0 ms). Held C-E-G-Bb recognised as C7. MIDI loop without self-dialogue. Channel filter, audio + MIDI mix, waits for keys to be released in listening mode. MIDI thru checked in a VST3 host.
+- Strummed chords recognised: C, Am, G7, Fmaj7, plus a C → G change. Am7 arpeggio recognised. Scales recognised: D dorian, A harmonic minor, minor pentatonic.
+- Passes pluginval (strictness 10, editor included). MIDI output checked in a VST3 host.
 
-- Les **notes** sont entendues une par une. Les accords, eux, sont reconnus pour l'harmonie (gamme, accord), mais pas encore rejoués comme accords.
-- Accord de référence La 440 Hz ; un instrument très désaccordé brouille la détection d'harmonie.
-- La mémoire n'est pas sauvegardée avec le projet (seuls les réglages le sont).
-- Pistes : réponse polyphonique (accords), pitch bend pour les glissandi en mode Bright, corpus MIDI chargé à l'avance (« apprendre » un style), timbre → CC (brillance, bruit) pour moduler le synthé, device Max for Live, module Schwung pour le Move.
+## Current limits / ideas
+
+- **Notes** are heard one at a time. Chords are recognised for harmony (scale, chord) but not yet played back as chords.
+- Tuning reference A = 440 Hz; a badly detuned instrument confuses harmony detection.
+- The memory is not saved with the project (only the settings are).
+- Ideas: polyphonic answers (chords), pitch bend to follow glides in Bright mode, a MIDI corpus loaded in advance ("learn" a style), timbre → CC (brightness, noisiness) to modulate the synth, a Max for Live device, a Schwung module for the Move.

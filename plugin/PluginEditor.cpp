@@ -11,10 +11,10 @@ namespace {
 constexpr int W = DialogueEditor::kW, H = DialogueEditor::kH;
 constexpr int kHeaderH = 64, kFooterH = 32;
 
-juce::String fmtS(float s) { return juce::String(s, 1).replaceCharacter('.', ',') + " s"; }
+juce::String fmtS(float s) { return juce::String(s, 1) + " s"; }
 
 juce::String noteName(int m) {
-    static const char* n[] = {"Do", "Do#", "Ré", "Mib", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "Sib", "Si"};
+    static const char* n[] = {"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
     return u8(n[((m % 12) + 12) % 12]) + juce::String(m / 12 - 1);
 }
 
@@ -136,8 +136,8 @@ struct SwitchButton : juce::ToggleButton {
         k = on ? k.removeFromRight(k.getWidth() / 2) : k.removeFromLeft(k.getWidth() / 2);
         g.setColour(on ? p.signal : ink);
         g.fillRect(k);
-        ui::text(g, u8("Répondre"), r.removeFromTop(r.getHeight() / 2).withTrimmedTop(4), L.body(12.f), ink, juce::Justification::bottomLeft);
-        ui::text(g, on ? "OUI" : "NON", r.withTrimmedBottom(4), L.body(15.f, true), ink, juce::Justification::topLeft);
+        ui::text(g, u8("Answer"), r.removeFromTop(r.getHeight() / 2).withTrimmedTop(4), L.body(12.f), ink, juce::Justification::bottomLeft);
+        ui::text(g, on ? "ON" : "OFF", r.withTrimmedBottom(4), L.body(15.f, true), ink, juce::Justification::topLeft);
     }
 };
 
@@ -329,7 +329,7 @@ public:
         g.setColour(p.line);
         g.fillRect(0, kHeaderH - (int)p.lineW, W, (int)p.lineW);
         ui::text(g, "LPF/DIALOGUE", {16, 10, 230, 28}, L.mono(22.f), p.fg);
-        ui::text(g, u8("Un partenaire qui écoute et répond"), {16, 36, 230, 18}, L.body(12.5f), p.muted);
+        ui::text(g, u8("A partner that listens and answers"), {16, 36, 230, 18}, L.body(12.5f), p.muted);
 
         paintStatus(g, L, p);
         paintTimeline(g, L, p);
@@ -388,10 +388,10 @@ private:
     juce::OwnedArray<StepChip> chips;
     SwitchButton respondBtn;
     std::unique_ptr<ButtonAtt> respondAtt;
-    juce::TextButton helpBtn{"Aide"}, displayBtn{"Affichage"};
+    juce::TextButton helpBtn{"Help"}, displayBtn{"Display"};
 
     void buildHeader() {
-        const char* labels[] = {"Il écoute", "Il répond sur", "Caractère"};
+        const char* labels[] = {"Listens to", "Answers on", "Character"};
         for (int i = 0; i < 3; ++i) {
             auto* c = chips.add(new StepChip(juce::String(i + 1), u8(labels[i])));
             c->onClick = [this, i] {
@@ -400,16 +400,16 @@ private:
             };
             addAndMakeVisible(c);
         }
-        respondBtn.setTitle(u8("Répondre"));
-        respondBtn.setDescription(u8("Coupé : il écoute et apprend sans répondre. Raccourci : Espace."));
+        respondBtn.setTitle(u8("Answer"));
+        respondBtn.setDescription(u8("Off: it listens and learns without answering. Shortcut: Space."));
         addAndMakeVisible(respondBtn);
         respondAtt = std::make_unique<ButtonAtt>(proc.apvts, "respond", respondBtn);
         styleButton(helpBtn, "help");
         styleButton(displayBtn, "display");
         helpBtn.onClick = [this] { openDialog(help); };
         displayBtn.onClick = [this] { openDialog(display); };
-        helpBtn.setDescription(u8("Comment ça marche, raccourcis clavier. Raccourci : ?"));
-        displayBtn.setDescription(u8("Thème, taille du texte, accessibilité."));
+        helpBtn.setDescription(u8("How it works, keyboard shortcuts. Shortcut: ?"));
+        displayBtn.setDescription(u8("Theme, text size, accessibility."));
         addAndMakeVisible(helpBtn);
         addAndMakeVisible(displayBtn);
     }
@@ -417,9 +417,9 @@ private:
     void updateChips() {
         const int src = juce::roundToInt(getParam(proc, "source"));
         const bool bright = getParam(proc, "mode") > 0.5f;
-        juce::String s = src == 1 ? "Clavier MIDI" : (src == 2 ? "Audio + MIDI" : (bright ? u8("Audio · Bright") : u8("Audio · instrument")));
-        juce::String r = u8("canal ") + juce::String(juce::roundToInt(getParam(proc, "channel")));
-        juce::String c = presetIndex >= 0 ? u8(ui::presets()[(size_t)presetIndex].name) : juce::String("Perso");
+        juce::String s = src == 1 ? "MIDI keyboard" : (src == 2 ? "Audio + MIDI" : (bright ? u8("Audio · Bright") : u8("Audio · instrument")));
+        juce::String r = u8("channel ") + juce::String(juce::roundToInt(getParam(proc, "channel")));
+        juce::String c = presetIndex >= 0 ? u8(ui::presets()[(size_t)presetIndex].name) : juce::String("Custom");
         const juce::String vals[] = {s, r, c};
         for (int i = 0; i < 3; ++i)
             if (chips[i]->value != vals[i]) {
@@ -430,7 +430,7 @@ private:
     }
 
     // ================================================================ status
-    juce::TextButton freezeBtn{"Figer"}, clearBtn{u8("Effacer…")};
+    juce::TextButton freezeBtn{"Freeze"}, clearBtn{u8("Clear…")};
     std::unique_ptr<ButtonAtt> freezeAtt;
     bool clearArmed = false;
     juce::Rectangle<int> statusR, timelineR, hearingR, rightR, body;
@@ -438,17 +438,17 @@ private:
     void buildStatus() {
         freezeBtn.setClickingTogglesState(true);
         styleButton(freezeBtn, {}, false, 14.f);
-        freezeBtn.setTitle(u8("Figer la mémoire"));
-        freezeBtn.setDescription(u8("Il n'apprend plus rien, mais continue d'écouter et de répondre. Raccourci : F."));
+        freezeBtn.setTitle(u8("Freeze memory"));
+        freezeBtn.setDescription(u8("It stops learning, but keeps listening and answering. Shortcut: F."));
         freezeAtt = std::make_unique<ButtonAtt>(proc.apvts, "freeze", freezeBtn);
         addAndMakeVisible(freezeBtn);
         styleButton(clearBtn, {}, false, 14.f);
-        clearBtn.setTitle(u8("Effacer la mémoire"));
-        clearBtn.setDescription(u8("Oublie tout ce qu'il a entendu. Demande une confirmation."));
+        clearBtn.setTitle(u8("Clear memory"));
+        clearBtn.setDescription(u8("Forgets everything it heard. Asks for confirmation."));
         clearBtn.onClick = [this] {
             if (!clearArmed) {
                 clearArmed = true;
-                clearBtn.setButtonText(u8("Confirmer"));
+                clearBtn.setButtonText(u8("Confirm"));
                 clearBtn.getProperties().set("accent", true);
                 clearBtn.repaint();
                 juce::Component::SafePointer<Content> safe(this);
@@ -458,7 +458,7 @@ private:
             } else {
                 proc.requestClear();
                 disarmClear();
-                juce::AccessibilityHandler::postAnnouncement(u8("Mémoire effacée."), juce::AccessibilityHandler::AnnouncementPriority::medium);
+                juce::AccessibilityHandler::postAnnouncement(u8("Memory cleared."), juce::AccessibilityHandler::AnnouncementPriority::medium);
             }
         };
         addAndMakeVisible(clearBtn);
@@ -466,7 +466,7 @@ private:
 
     void disarmClear() {
         clearArmed = false;
-        clearBtn.setButtonText(u8("Effacer…"));
+        clearBtn.setButtonText(u8("Clear…"));
         clearBtn.getProperties().remove("accent");
         clearBtn.repaint();
     }
@@ -477,28 +477,28 @@ private:
         StatusText s;
         const bool respond = getParam(const_cast<DialogueProcessor&>(proc), "respond") > 0.5f;
         const float interrupt = getParam(const_cast<DialogueProcessor&>(proc), "interruption");
-        const juce::String key = keyRoot >= 0 ? u8("en ") + keyText(keyRoot, scaleType) : juce::String();
+        const juce::String key = keyRoot >= 0 ? u8("in ") + keyText(keyRoot, scaleType) : juce::String();
         switch ((lpfd::Engine::Phase)phase) {
         case lpfd::Engine::Phase::Listening:
-            s = {u8("ÉCOUTE"), "listen", u8("Il vous écoute."), {}, false, 1};
-            if (!respond) s.sub = u8("Répondre est coupé : il apprend sans répondre.");
-            else if (interrupt <= 0.01f || needed >= 99) s.sub = juce::String(heard) + u8(" notes entendues. Il attend la fin de votre phrase.");
-            else s.sub = juce::String(heard) + u8(" notes entendues. Il peut répondre à partir de ") + juce::String(needed) + ".";
+            s = {u8("LISTENING"), "listen", u8("It's listening to you."), {}, false, 1};
+            if (!respond) s.sub = u8("Answering is off: it learns without answering.");
+            else if (interrupt <= 0.01f || needed >= 99) s.sub = juce::String(heard) + u8(" notes heard. Waiting for the end of your phrase.");
+            else s.sub = juce::String(heard) + u8(" notes heard. May answer from note ") + juce::String(needed) + ".";
             break;
         case lpfd::Engine::Phase::Waiting:
-            s = {u8("ATTEND"), "wait", respond ? u8("Phrase terminée. Il répond dans ") + fmtS(waitRemain) + "."
-                                               : u8("Phrase terminée. Répondre est coupé."), {}, respond, 2};
+            s = {u8("WAITING"), "wait", respond ? u8("Phrase over. Answering in ") + fmtS(waitRemain) + "."
+                                               : u8("Phrase over. Answering is off."), {}, respond, 2};
             break;
         case lpfd::Engine::Phase::Answering:
-            s = {u8("RÉPOND"), "answer", u8("Il vous répond") + (key.isNotEmpty() ? ", " + key : juce::String()) + ".",
-                 interrupt < 0.5f ? u8("Il se taira si vous reprenez.") : u8("Il continue même si vous reprenez."), false, 3};
+            s = {u8("ANSWERING"), "answer", u8("It's answering you") + (key.isNotEmpty() ? ", " + key : juce::String()) + ".",
+                 interrupt < 0.5f ? u8("It will stop if you start again.") : u8("It keeps going even if you start again."), false, 3};
             break;
         case lpfd::Engine::Phase::Silence:
         default:
             if (memSize == 0 && peak < getParam(const_cast<DialogueProcessor&>(proc), "gate"))
-                s = {u8("SILENCE"), "silence", u8("Il n'entend rien."), u8("Jouez quelque chose, ou baissez le seuil de silence si votre son est faible."), false, 0};
+                s = {u8("SILENCE"), "silence", u8("It hears nothing."), u8("Play something, or lower the silence threshold if your signal is quiet."), false, 0};
             else
-                s = {u8("À VOUS"), "listen", u8("À vous de jouer."), respond ? u8("Il répondra quand vous aurez joué.") : u8("Répondre est coupé."), false, 0};
+                s = {u8("YOUR TURN"), "listen", u8("Your turn."), respond ? u8("It will answer once you've played.") : u8("Answering is off."), false, 0};
         }
         return s;
     }
@@ -523,9 +523,9 @@ private:
         g.setColour(p.line);
         g.fillRect(mem.getX(), mem.getY(), (int)p.lineW, mem.getHeight());
         mem = mem.reduced(14, 8);
-        ui::text(g, u8("Mémoire"), mem.removeFromTop(18), L.body(13.f), p.muted);
+        ui::text(g, u8("Memory"), mem.removeFromTop(18), L.body(13.f), p.muted);
         const bool frozen = getParam(proc, "freeze") > 0.5f;
-        ui::text(g, juce::String(memSize) + " notes" + (frozen ? u8(" · figée") : juce::String()), mem.removeFromTop(26), L.mono(17.f), p.fg);
+        ui::text(g, juce::String(memSize) + " notes" + (frozen ? u8(" · frozen") : juce::String()), mem.removeFromTop(26), L.mono(17.f), p.fg);
 
         r = r.reduced(18, 12);
         ui::text(g, st.text, r.removeFromTop(30), L.body(19.f, true), p.fg);
@@ -555,14 +555,14 @@ private:
         panel(g, p, timelineR);
         auto r = timelineR;
         auto head = r.removeFromTop(40).reduced(14, 0);
-        ui::text(g, u8("La conversation"), head.removeFromLeft(140), L.body(16.f, true), p.fg);
-        ui::text(g, u8("· 12 dernières secondes"), head.removeFromLeft(200), L.body(14.f), p.muted);
+        ui::text(g, u8("The conversation"), head.removeFromLeft(140), L.body(16.f, true), p.fg);
+        ui::text(g, u8("· last 12 seconds"), head.removeFromLeft(200), L.body(14.f), p.muted);
         {
             auto lg = head.removeFromRight(150);
             auto a = lg.removeFromLeft(75), b = lg;
             g.setColour(p.fg);
             g.fillRect(a.removeFromLeft(14).withSizeKeepingCentre(12, 12));
-            ui::text(g, "Vous", a.withTrimmedLeft(6), L.body(14.f), p.fg);
+            ui::text(g, "You", a.withTrimmedLeft(6), L.body(14.f), p.fg);
             auto d = b.removeFromLeft(14).withSizeKeepingCentre(12, 12).toFloat();
             if (settings.shapes) {
                 juce::Path dia;
@@ -576,7 +576,7 @@ private:
                 g.setColour(p.signal);
                 g.fillRect(d);
             }
-            ui::text(g, "Lui", b.withTrimmedLeft(6), L.body(14.f), p.fg);
+            ui::text(g, "It", b.withTrimmedLeft(6), L.body(14.f), p.fg);
         }
         g.setColour(p.line);
         g.fillRect(timelineR.getX(), timelineR.getY() + 40, timelineR.getWidth(), (int)p.lineW);
@@ -586,8 +586,8 @@ private:
         auto labels = lanes.removeFromLeft(64);
         g.fillRect(labels.getRight() - (int)p.lineW, lanes.getY(), (int)p.lineW, lanes.getHeight() + 26);
         auto you = lanes.removeFromTop(lanes.getHeight() / 2), him = lanes;
-        ui::text(g, "VOUS", labels.removeFromTop(you.getHeight()), L.mono(13.f), p.fg, juce::Justification::centred);
-        ui::text(g, "LUI", labels, L.mono(13.f), p.fg, juce::Justification::centred);
+        ui::text(g, "YOU", labels.removeFromTop(you.getHeight()), L.mono(13.f), p.fg, juce::Justification::centred);
+        ui::text(g, "IT", labels, L.mono(13.f), p.fg, juce::Justification::centred);
         g.setColour(p.hair);
         g.fillRect(you.getX(), you.getBottom(), you.getWidth(), 1);
         g.setColour(p.line);
@@ -683,9 +683,9 @@ private:
                     // why it answered, under its answer (skipped if it would overlap the previous one)
                     if (isHim && gi >= 0) {
                         const auto& t = trig[(size_t)gi];
-                        juce::String why = t.reason == lpfd::TimelineEvent::Silence ? u8("après ") + fmtS(t.info) + u8(" de silence")
-                                         : t.reason == lpfd::TimelineEvent::Reflex ? u8("réflexe")
-                                         : u8("vous a coupé après ") + juce::String((int)t.info) + " notes";
+                        juce::String why = t.reason == lpfd::TimelineEvent::Silence ? u8("after ") + fmtS(t.info) + u8(" of silence")
+                                         : t.reason == lpfd::TimelineEvent::Reflex ? u8("reflex")
+                                         : u8("cut in after ") + juce::String((int)t.info) + " notes";
                         const auto f = L.body(12.5f);
                         const int tw = (int)juce::GlyphArrangement::getStringWidth(f, why) + 4;
                         const int tx = juce::jmin((int)a, lane.getRight() - tw - 4);
@@ -716,12 +716,12 @@ private:
         g.fillRect(nx - 1.f, (float)you.getY(), 2.f, (float)(him.getBottom() - you.getY()));
         auto tag = juce::Rectangle<int>((int)nx - 104, you.getY() + 6, 104, 18);
         g.fillRect(tag);
-        ui::text(g, "MAINTENANT", tag, L.mono(11.f), juce::Colour(0xff111111), juce::Justification::centred);
+        ui::text(g, "NOW", tag, L.mono(11.f), juce::Colour(0xff111111), juce::Justification::centred);
 
         // summary for screen readers
-        juce::String sum = phrasesYou == 0 && phrasesHim == 0 ? u8("Rien depuis 12 secondes.")
-                         : u8("Dans les 12 dernières secondes : vous avez joué ") + juce::String(phrasesYou) + u8(" phrase(s), il a répondu ")
-                               + juce::String(phrasesHim) + u8(" fois.");
+        juce::String sum = phrasesYou == 0 && phrasesHim == 0 ? u8("Nothing in the last 12 seconds.")
+                         : u8("In the last 12 seconds: you played ") + juce::String(phrasesYou) + u8(" phrase(s), it answered ")
+                               + juce::String(phrasesHim) + u8(" time(s).");
         if (sum != timelineSummary) { timelineSummary = sum; timelineAcc.setTitle(sum); }
     }
     int phrasesYou = 0, phrasesHim = 0;
@@ -730,19 +730,19 @@ private:
     // ================================================================ hearing
     ui::Slider gateSlider;
     std::unique_ptr<SliderAtt> gateAtt;
-    juce::TextButton measureBtn{"Mesurer le silence"};
+    juce::TextButton measureBtn{"Measure silence"};
     int calibShown = 0;
 
     void buildHearing() {
         addAndMakeVisible(gateSlider);
         gateAtt = std::make_unique<SliderAtt>(proc.apvts, "gate", gateSlider);
         gateSlider.defaultValue = -55.0;
-        gateSlider.setTitle("Seuil de silence");
-        gateSlider.setDescription(u8("En dessous de ce niveau, c'est du silence. Le repère orange sur le vumètre."));
+        gateSlider.setTitle("Silence threshold");
+        gateSlider.setDescription(u8("Below this level it's silence. The orange mark on the meter."));
         gateSlider.textFromValueFunction = [](double v) { return juce::String(juce::roundToInt(v)) + " dB"; };
         gateSlider.onValueChange = [this] { repaint(hearingR); };
         styleButton(measureBtn, "wave", false, 14.f);
-        measureBtn.setDescription(u8("Ne jouez pas pendant 3 secondes : il mesure le bruit de la pièce et place le seuil juste au-dessus. Raccourci : S."));
+        measureBtn.setDescription(u8("Don't play for 3 seconds: it measures the room noise and sets the threshold just above it. Shortcut: S."));
         measureBtn.onClick = [this] { proc.requestCalibration(); };
         addAndMakeVisible(measureBtn);
         addAndMakeVisible(timelineAcc);
@@ -764,14 +764,14 @@ private:
         };
         const bool src = getParam(proc, "source") >= 0.5f;
         cell(read.removeFromLeft(92), "Note", hearing && pitch > 0.f ? noteName(juce::roundToInt(pitch)) : (src ? juce::String("MIDI") : "---"), true);
-        cell(read.removeFromLeft(170), "Gamme", ui::upper(keyText(keyRoot, scaleType)), true);
-        cell(read, "Accord", chordText(chordRoot, chordType), false);
+        cell(read.removeFromLeft(170), "Scale", ui::upper(keyText(keyRoot, scaleType)), true);
+        cell(read, "Chord", chordText(chordRoot, chordType), false);
 
         r = r.reduced(14, 10);
         auto title = r.removeFromTop(20);
-        ui::text(g, u8("Ce qu'il entend"), title.removeFromLeft(130), L.body(16.f, true), p.fg);
+        ui::text(g, u8("What it hears"), title.removeFromLeft(130), L.body(16.f, true), p.fg);
         const float gate = getParam(proc, "gate");
-        ui::text(g, "seuil " + juce::String(juce::roundToInt(gate)) + " dB", title, L.body(13.f), p.muted, juce::Justification::centredRight);
+        ui::text(g, "threshold " + juce::String(juce::roundToInt(gate)) + " dB", title, L.body(13.f), p.muted, juce::Justification::centredRight);
         auto meter = r.removeFromTop(26).reduced(0, 4);
         const int n = 40;
         const float segW = (float)meter.getWidth() / n;
@@ -785,11 +785,11 @@ private:
         g.setColour(p.signal);
         g.fillRect(gx - 2.f, (float)meter.getY() - 4.f, 4.f, (float)meter.getHeight() + 8.f);
         auto row = r.removeFromTop(36);
-        ui::text(g, "Seuil", row.removeFromLeft(44), L.body(13.f), p.muted);
+        ui::text(g, "Threshold", row.removeFromLeft(44), L.body(13.f), p.muted);
         const int cs = proc.calibState.load();
         juce::String note;
-        if (cs == 1) note = u8("Mesure du silence… ne jouez pas (") + juce::String(juce::roundToInt(proc.calibProgress.load() * 100)) + " %)";
-        else if (cs == 2) note = u8("Bruit de fond ") + juce::String(juce::roundToInt(proc.calibNoiseDb.load())) + u8(" dB : seuil placé à ")
+        if (cs == 1) note = u8("Measuring silence… don't play (") + juce::String(juce::roundToInt(proc.calibProgress.load() * 100)) + " %)";
+        else if (cs == 2) note = u8("Room noise ") + juce::String(juce::roundToInt(proc.calibNoiseDb.load())) + u8(" dB: threshold set to ")
                                  + juce::String(juce::roundToInt(proc.calibResultDb.load())) + " dB.";
         if (note.isNotEmpty()) ui::text(g, note, r.removeFromTop(18), L.body(12.5f), cs == 1 ? p.signalText : p.muted);
     }
@@ -798,50 +798,50 @@ private:
     juce::Component character, advanced, routing;
     juce::OwnedArray<juce::TextButton> presetBtns;
     juce::OwnedArray<QSlider> charSliders;
-    juce::TextButton advancedBtn{u8("Réglages avancés : oreille, tessiture, MIDI")};
+    juce::TextButton advancedBtn{u8("Advanced: ear, range, MIDI")};
     int presetIndex = -1;
     View currentView = View::Character;
 
     void buildCharacter() {
         addAndMakeVisible(character);
-        character.setTitle(u8("Son caractère"));
+        character.setTitle(u8("Its character"));
         character.setFocusContainerType(FocusContainerType::focusContainer);
         for (int i = 0; i < (int)ui::presets().size(); ++i) {
             auto* b = presetBtns.add(new juce::TextButton(u8(ui::presets()[(size_t)i].name)));
             styleButton(*b, {}, false, 14.f);
             b->setRadioGroupId(5100);
-            b->setDescription(u8(ui::presets()[(size_t)i].desc) + u8(" Raccourci : ") + juce::String(i + 1) + ".");
+            b->setDescription(u8(ui::presets()[(size_t)i].desc) + u8(" Shortcut: ") + juce::String(i + 1) + ".");
             b->onClick = [this, i] { applyPreset(i); };
             character.addAndMakeVisible(b);
         }
-        auto key = [this] { return keyRoot >= 0 ? keyText(keyRoot, scaleType) : u8("la gamme détectée"); };
+        auto key = [this] { return keyRoot >= 0 ? keyText(keyRoot, scaleType) : u8("the detected scale"); };
         auto add = [this](QSlider* q) { charSliders.add(q); character.addAndMakeVisible(q); };
-        add(new QSlider(proc, "patience", u8("Quand répond-il ?"), u8("À chaque note"), u8("À la fin"), [](double v) {
-            if (v < 0.04) return u8("Il répond à chaque note, sans attendre.");
-            return u8("Il écoute environ ") + juce::String(1 + juce::roundToInt(v * v * 15)) + u8(" notes, ou ")
-                   + fmtS((float)(0.08 + 1.92 * std::pow(v, 1.5))) + u8(" de silence.");
+        add(new QSlider(proc, "patience", u8("When does it answer?"), u8("Every note"), u8("At the end"), [](double v) {
+            if (v < 0.04) return u8("It answers every note, without waiting.");
+            return u8("It listens to about ") + juce::String(1 + juce::roundToInt(v * v * 15)) + u8(" notes, or ")
+                   + fmtS((float)(0.08 + 1.92 * std::pow(v, 1.5))) + u8(" of silence.");
         }));
-        add(new QSlider(proc, "interruption", u8("Vous coupe-t-il la parole ?"), "Jamais", "Souvent", [](double v) {
-            return v < 0.15 ? u8("Jamais par-dessus vous, et il se tait si vous reprenez.")
-                 : v < 0.5 ? u8("Il vous coupe parfois, mais se tait si vous reprenez.")
-                           : u8("Il n'hésite pas à jouer par-dessus vous.");
+        add(new QSlider(proc, "interruption", u8("Does it cut in?"), "Never", "Often", [](double v) {
+            return v < 0.15 ? u8("Never over you, and it stops if you start again.")
+                 : v < 0.5 ? u8("It sometimes cuts in, but stops if you start again.")
+                           : u8("It happily plays over you.");
         }));
-        add(new QSlider(proc, "contrast", u8("Comment répond-il ?"), "Il imite", "Il contredit", [](double v) {
-            return v < 0.25 ? u8("Il reprend votre registre, votre rythme, votre contour.")
-                 : v < 0.6 ? u8("Tantôt il imite, tantôt il s'oppose.")
-                           : u8("Il part à l'opposé : autre registre, autre rythme.");
+        add(new QSlider(proc, "contrast", u8("How does it answer?"), "Imitates", "Contradicts", [](double v) {
+            return v < 0.25 ? u8("It follows your register, rhythm and contour.")
+                 : v < 0.6 ? u8("Sometimes it imitates, sometimes it opposes.")
+                           : u8("It goes the other way: other register, other rhythm.");
         }));
-        add(new QSlider(proc, "random", u8("D'où viennent ses notes ?"), "De vous", u8("Inventées"), [key](double v) {
-            return v < 0.15 ? u8("Seulement des enchaînements entendus chez vous.")
-                 : v < 0.55 ? u8("Il ajoute quelques notes de ") + key() + "."
-                            : u8("Il invente beaucoup, en restant dans ") + key() + ".";
+        add(new QSlider(proc, "random", u8("Where do its notes come from?"), "From you", u8("Invented"), [key](double v) {
+            return v < 0.15 ? u8("Only sequences it heard from you.")
+                 : v < 0.55 ? u8("It adds a few notes from ") + key() + "."
+                            : u8("It invents a lot, staying in ") + key() + ".";
         }));
-        add(new QSlider(proc, "length", u8("Longueur de ses réponses"), "Court", "Long", [](double v) {
-            return u8("Environ ") + juce::String(juce::jmax(1, juce::roundToInt(6 * v))) + u8(" notes pour 6 entendues.");
+        add(new QSlider(proc, "length", u8("Length of its answers"), "Short", "Long", [](double v) {
+            return u8("About ") + juce::String(juce::jmax(1, juce::roundToInt(6 * v))) + u8(" notes for every 6 heard.");
         }));
-        add(new QSlider(proc, "humanize", "Jeu", "Machine", "Humain", [](double v) {
-            return v < 0.1 ? u8("Réaction immédiate, tempo strict, nuances égales.")
-                           : u8("Réagit avec un léger temps variable, respire, varie les nuances.");
+        add(new QSlider(proc, "humanize", "Feel", "Machine", "Human", [](double v) {
+            return v < 0.1 ? u8("Instant reaction, strict timing, even dynamics.")
+                           : u8("Reacts with a slightly varying delay, breathes, varies its dynamics.");
         }));
         styleButton(advancedBtn, "right", false, 14.f);
         advancedBtn.getProperties().set("iconRight", true);
@@ -894,19 +894,19 @@ public:
         setParam(proc, "length", ui::lengthFrom01(pr.length01));
         setParam(proc, "humanize", pr.humanize);
         if (settings.speak)
-            juce::AccessibilityHandler::postAnnouncement(u8("Caractère : ") + u8(pr.name), juce::AccessibilityHandler::AnnouncementPriority::medium);
+            juce::AccessibilityHandler::postAnnouncement(u8("Character: ") + u8(pr.name), juce::AccessibilityHandler::AnnouncementPriority::medium);
     }
 
 private:
     // ================================================================ right: advanced
     juce::Viewport advView;
     juce::Component advInner;
-    juce::TextButton advBack{"Retour"}, routeBack{"Retour"};
+    juce::TextButton advBack{"Back"}, routeBack{"Back"};
     std::unique_ptr<ui::Choice> earChoice, gridChoice, sourceChoice;
     juce::OwnedArray<QSlider> advSliders;
     juce::ComboBox lowBox, highBox, inBox, outBox;
     std::unique_ptr<ComboAtt> inAtt;
-    juce::ToggleButton thruBtn{u8("Renvoyer aussi votre jeu MIDI")};
+    juce::ToggleButton thruBtn{u8("Also send your MIDI playing out")};
     std::unique_ptr<ButtonAtt> thruAtt;
     struct Strip : juce::Component {
         DialogueProcessor* proc = nullptr;
@@ -922,7 +922,7 @@ private:
                 auto c = juce::Rectangle<float>(r.getX() + o * w, (float)r.getY(), w, (float)r.getHeight());
                 g.setColour(in ? p.fg : p.bg);
                 g.fillRect(c);
-                ui::text(g, "Do" + juce::String(o), c.toNearestInt(), L.mono(11.f), in ? p.bg : p.muted, juce::Justification::centred);
+                ui::text(g, "C" + juce::String(o), c.toNearestInt(), L.mono(11.f), in ? p.bg : p.muted, juce::Justification::centred);
                 if (o) { g.setColour(p.line); g.fillRect(c.getX(), c.getY(), 1.f, c.getHeight()); }
             }
             g.setColour(p.line);
@@ -952,10 +952,10 @@ private:
 
     void buildAdvanced() {
         addChildComponent(advanced);
-        advanced.setTitle(u8("Réglages avancés"));
+        advanced.setTitle(u8("Advanced settings"));
         advanced.setFocusContainerType(FocusContainerType::focusContainer);
         styleButton(advBack, "left", false, 14.f);
-        advBack.setTitle(u8("Retour au caractère"));
+        advBack.setTitle(u8("Back to character"));
         advBack.onClick = [this] { showView(View::Character); };
         advanced.addAndMakeVisible(advBack);
         advanced.addAndMakeVisible(advView);
@@ -963,17 +963,17 @@ private:
         advView.setScrollBarsShown(true, false);
 
         auto heading = [this](const juce::String& t) { auto* h = headings.add(new Heading()); h->t = t; advInner.addAndMakeVisible(h); };
-        heading(u8("OREILLE"));
-        earChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("mode"), u8("Type d'écoute"),
+        heading(u8("EAR"));
+        earChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("mode"), u8("Listening type"),
                                                  juce::StringArray{"Instrument", "Bright"},
-                                                 juce::StringArray{u8("55 Hz – 2 kHz"), u8("Voix, oiseaux · jusqu'à 10 kHz")});
+                                                 juce::StringArray{u8("55 Hz – 2 kHz"), u8("Voice, birds · up to 10 kHz")});
         advInner.addAndMakeVisible(*earChoice);
         auto addQ = [this](QSlider* q) { advSliders.add(q); advInner.addAndMakeVisible(q); };
-        addQ(new QSlider(proc, "sensitivity", u8("Sensibilité aux attaques"), "Peu", "Beaucoup", [](double v) {
-            return v > 0.7 ? u8("Entend les notes douces, mais aussi les bruits de doigts.")
-                 : v < 0.3 ? u8("Seulement les attaques franches.") : u8("Équilibré.");
+        addQ(new QSlider(proc, "sensitivity", u8("Attack sensitivity"), "Little", "A lot", [](double v) {
+            return v > 0.7 ? u8("Hears soft notes, but also finger noise.")
+                 : v < 0.3 ? u8("Only clear attacks.") : u8("Balanced.");
         }));
-        heading(u8("TESSITURE DE SES RÉPONSES"));
+        heading(u8("RANGE OF ITS ANSWERS"));
         strip.proc = &proc;
         advInner.addAndMakeVisible(strip);
         auto fillBox = [this](juce::ComboBox& b, const char* id, const juce::String& title) {
@@ -982,44 +982,44 @@ private:
             b.onChange = [this, &b, id] { setParam(proc, id, (float)(b.getSelectedId() - 1)); strip.repaint(); };
             advInner.addAndMakeVisible(b);
         };
-        advLabel("Plus grave", true);
-        advLabel(u8("Plus aiguë"), true);
-        fillBox(lowBox, "low", u8("Note la plus grave"));
-        fillBox(highBox, "high", u8("Note la plus aiguë"));
-        advLabel(u8("Ce qui dépasse est replié à l'octave, jamais coupé."), false, 13.f);
-        heading(u8("MÉMOIRE ET STYLE"));
-        addQ(new QSlider(proc, "memory", "Il se souvient de", u8("Dernières notes"), "Tout", [](double v) {
-            return u8("Environ ") + juce::String(juce::roundToInt(8.0 * std::pow(2.0, v * 9.0))) + u8(" dernières notes.");
+        advLabel("Lowest", true);
+        advLabel(u8("Highest"), true);
+        fillBox(lowBox, "low", u8("Lowest note"));
+        fillBox(highBox, "high", u8("Highest note"));
+        advLabel(u8("Notes outside are folded by octaves, never dropped."), false, 13.f);
+        heading(u8("MEMORY AND STYLE"));
+        addQ(new QSlider(proc, "memory", "It remembers", u8("Last notes"), "Everything", [](double v) {
+            return u8("About ") + juce::String(juce::roundToInt(8.0 * std::pow(2.0, v * 9.0))) + u8(" notes.");
         }));
-        addQ(new QSlider(proc, "fidelity", "Il cite", "Des bribes", "De longs bouts", [](double v) {
-            return v < 0.3 ? u8("Il recombine librement vos tournures.") : v < 0.7 ? u8("Il cite des fragments courts.") : u8("Il cite de longs passages.");
+        addQ(new QSlider(proc, "fidelity", "It quotes", "Snippets", "Long passages", [](double v) {
+            return v < 0.3 ? u8("It freely recombines your phrases.") : v < 0.7 ? u8("It quotes short fragments.") : u8("It quotes long passages.");
         }));
-        addQ(new QSlider(proc, "scale", "Il reste dans la gamme", "Libre", "Toujours", [](double v) {
-            return u8("Dans la gamme ") + juce::String(juce::roundToInt(v * 100)) + u8(" % du temps.");
+        addQ(new QSlider(proc, "scale", "It stays in the scale", "Free", "Always", [](double v) {
+            return u8("In the scale ") + juce::String(juce::roundToInt(v * 100)) + u8("% of the time.");
         }));
-        gridChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("grid"), u8("Caler sur la grille du morceau"),
-                                                  juce::StringArray{"Libre", "Noire", "Croche", "Double"});
+        gridChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("grid"), u8("Lock to the song's grid"),
+                                                  juce::StringArray{"Free", "1/4", "1/8", "1/16"});
         gridChoice->labelHeight = 24;
         advInner.addAndMakeVisible(*gridChoice);
         heading("MIDI");
-        sourceChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("source"), u8("Il écoute"),
+        sourceChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("source"), u8("Listens to"),
                                                     juce::StringArray{"Audio", "MIDI", "Audio + MIDI"});
         sourceChoice->labelHeight = 24;
         advInner.addAndMakeVisible(*sourceChoice);
-        advLabel(u8("Écoute le canal"), true);
-        advLabel(u8("Répond sur le canal"), true);
-        inBox.addItem("Tous", 1);
+        advLabel(u8("Listens to channel"), true);
+        advLabel(u8("Answers on channel"), true);
+        inBox.addItem("All", 1);
         for (int i = 1; i <= 16; ++i) inBox.addItem(juce::String(i), i + 1);
-        inBox.setTitle(u8("Canal MIDI écouté"));
+        inBox.setTitle(u8("MIDI channel it listens to"));
         advInner.addAndMakeVisible(inBox);
         inAtt = std::make_unique<ComboAtt>(proc.apvts, "midiin", inBox);
         for (int i = 1; i <= 16; ++i) outBox.addItem(juce::String(i), i);
-        outBox.setTitle(u8("Canal MIDI des réponses"));
+        outBox.setTitle(u8("MIDI channel for answers"));
         outBox.onChange = [this] { setParam(proc, "channel", (float)outBox.getSelectedId()); };
         advInner.addAndMakeVisible(outBox);
-        thruBtn.getProperties().set("desc", u8("Un seul synthé joue vos notes et ses réponses."));
+        thruBtn.getProperties().set("desc", u8("One synth plays both your notes and its answers."));
         thruBtn.getProperties().set("topAlign", true);
-        thruBtn.setDescription(u8("Un seul synthé joue vos notes et ses réponses."));
+        thruBtn.setDescription(u8("One synth plays both your notes and its answers."));
         advInner.addAndMakeVisible(thruBtn);
         thruAtt = std::make_unique<ButtonAtt>(proc.apvts, "thru", thruBtn);
     }
@@ -1072,30 +1072,30 @@ private:
     }
 
     // ================================================================ right: routing
-    juce::TextButton testBtn{"Jouer une note test (Do4)"};
+    juce::TextButton testBtn{"Play a test note (C4)"};
     juce::OwnedArray<juce::TextButton> hostBtns;
     bool tested = false;
     juce::Rectangle<int> checksR, stepsR;
 
     void buildRouting() {
         addChildComponent(routing);
-        routing.setTitle("Branchement");
+        routing.setTitle("Routing");
         routing.setFocusContainerType(FocusContainerType::focusContainer);
         styleButton(routeBack, "left", false, 14.f);
-        routeBack.setTitle(u8("Retour au caractère"));
+        routeBack.setTitle(u8("Back to character"));
         routeBack.onClick = [this] { showView(View::Character); };
         routing.addAndMakeVisible(routeBack);
         styleButton(testBtn, "play", true, 15.f);
-        testBtn.setDescription(u8("Envoie un Do4 sur le canal de sortie. Vous devez l'entendre dans votre synthé."));
+        testBtn.setDescription(u8("Sends a C4 on the output channel. You should hear it from your synth."));
         testBtn.onClick = [this] {
             proc.requestTestNote();
             tested = true;
-            testBtn.setButtonText("Rejouer la note test");
+            testBtn.setButtonText("Play the test note again");
             routing.repaint();
-            juce::AccessibilityHandler::postAnnouncement(u8("Note test envoyée."), juce::AccessibilityHandler::AnnouncementPriority::medium);
+            juce::AccessibilityHandler::postAnnouncement(u8("Test note sent."), juce::AccessibilityHandler::AnnouncementPriority::medium);
         };
         routing.addAndMakeVisible(testBtn);
-        const char* hosts[] = {"Reaper", "Ableton Live", "Autonome"};
+        const char* hosts[] = {"Reaper", "Ableton Live", "Standalone"};
         for (int i = 0; i < 3; ++i) {
             auto* b = hostBtns.add(new juce::TextButton(hosts[i]));
             styleButton(*b, {}, false, 14.f);
@@ -1132,20 +1132,20 @@ private:
     void paintRouting(juce::Graphics& g, ui::Look& L, const ui::Palette& p) {
         if (!routing.isVisible()) return;
         auto off = routing.getPosition();
-        ui::text(g, "Branchement", juce::Rectangle<int>(off.x + 130, off.y + 6, 240, 44), L.body(16.f, true), p.fg);
+        ui::text(g, "Routing", juce::Rectangle<int>(off.x + 130, off.y + 6, 240, 44), L.body(16.f, true), p.fg);
         const float gate = getParam(proc, "gate");
         const int src = juce::roundToInt(getParam(proc, "source"));
         const bool audioOk = src == 1 || peak > gate;
         struct C { juce::String title, state, detail; bool good; };
         const int ch = juce::roundToInt(getParam(proc, "channel"));
         C checks[3] = {
-            {"Son entrant", audioOk ? u8("reçu") : u8("rien"),
-             src == 1 ? u8("Écoute MIDI : jouez sur votre clavier.")
-                      : (audioOk ? u8("Niveau ") + juce::String(juce::roundToInt(peak)) + u8(" dB, au-dessus du seuil (") + juce::String(juce::roundToInt(gate)) + " dB)."
-                                 : u8("Rien au-dessus du seuil. Vérifiez l'entrée de la piste, ou baissez le seuil.")), audioOk},
-            {u8("Réponses envoyées"), juce::String(sentLastMinute) + u8(" notes depuis 1 min"), u8("Sur le canal ") + juce::String(ch) + ".", sentLastMinute > 0},
-            {u8("Reçues par votre synthé"), tested ? u8("à vous de dire") : u8("à vérifier"),
-             tested ? u8("Vous avez entendu le Do4 ? Sinon, suivez les étapes ci-dessous.") : u8("Le plugin ne voit pas votre synthé : jouez la note test."), tested},
+            {"Incoming sound", audioOk ? u8("received") : u8("nothing"),
+             src == 1 ? u8("Listening to MIDI: play your keyboard.")
+                      : (audioOk ? u8("Level ") + juce::String(juce::roundToInt(peak)) + u8(" dB, above the threshold (") + juce::String(juce::roundToInt(gate)) + " dB)."
+                                 : u8("Nothing above the threshold. Check the track input, or lower the threshold.")), audioOk},
+            {u8("Answers sent"), juce::String(sentLastMinute) + u8(" notes in the last minute"), u8("On channel ") + juce::String(ch) + ".", sentLastMinute > 0},
+            {u8("Received by your synth"), tested ? u8("your call") : u8("to check"),
+             tested ? u8("Did you hear the C4? If not, follow the steps below.") : u8("The plugin can't see your synth: play the test note."), tested},
         };
         auto r = checksR.translated(off.x, off.y);
         g.setColour(p.line);
@@ -1163,18 +1163,18 @@ private:
             ui::text(g, checks[i].detail, row, L.body(13.f), p.muted, juce::Justification::topLeft, 2);
         }
         auto t = testBtn.getBounds().translated(off.x, off.y + 54);
-        if (tested) ui::text(g, u8("Note test envoyée sur le canal ") + juce::String(ch) + ".", t.withHeight(20), L.body(13.f), p.fg);
-        ui::text(g, u8("Brancher la sortie dans…"), t.translated(0, 26).withHeight(22), L.body(15.f, true), p.fg);
+        if (tested) ui::text(g, u8("Test note sent on channel ") + juce::String(ch) + ".", t.withHeight(20), L.body(13.f), p.fg);
+        ui::text(g, u8("Connect the output in…"), t.translated(0, 26).withHeight(22), L.body(15.f, true), p.fg);
         static const char* steps[3][3] = {
-            {"Piste du plugin : bouton Route › Add new send vers la piste du synthé.",
-             "Dans cet envoi : Audio sur None, MIDI sur All › All.",
-             "Choisissez le même canal que « Répond sur le canal » si le synthé filtre."},
-            {"Live ne reçoit pas le MIDI d'un plugin : ouvrez LPF Dialogue en application autonome.",
-             "Dans ses réglages, Sortie MIDI : bus IAC (Mac) ou loopMIDI (Windows).",
-             "Dans Live, piste du synthé : MIDI From › ce bus, Monitor sur In."},
-            {"Options › Réglages audio/MIDI : choisissez l'entrée audio et la sortie MIDI.",
-             "Sortie vers le Move en USB, ou vers un bus virtuel.",
-             "Écoutez au casque pour que ses réponses ne repassent pas par le micro."}};
+            {"On the plugin's track: Route button › Add new send to the synth track.",
+             "In that send: Audio set to None, MIDI set to All › All.",
+             "If the synth filters channels, use the same channel as \u201cAnswers on channel\u201d."},
+            {"Live doesn't receive MIDI from a plugin: open LPF Dialogue as a standalone app.",
+             "In its settings, MIDI output: IAC bus (Mac) or loopMIDI (Windows).",
+             "In Live, on the synth track: MIDI From › that bus, Monitor set to In."},
+            {"Options › Audio/MIDI Settings: pick the audio input and the MIDI output.",
+             "Output to the Move over USB, or to a virtual bus.",
+             "Use headphones so its answers don't go back into the mic."}};
         auto s = stepsR.translated(off.x, off.y);
         g.setColour(p.bg);
         g.fillRect(s);
@@ -1191,13 +1191,13 @@ private:
     void paintRightHeader(juce::Graphics& g, ui::Look& L, const ui::Palette& p) {
         auto off = rightR;
         if (currentView == View::Character) {
-            ui::text(g, u8("Son caractère"), juce::Rectangle<int>(off.getX() + 14, off.getY() + 10, 140, 24), L.body(16.f, true), p.fg);
-            ui::text(g, u8("· ") + (presetIndex >= 0 ? u8(ui::presets()[(size_t)presetIndex].name) : juce::String("Perso")),
+            ui::text(g, u8("Its character"), juce::Rectangle<int>(off.getX() + 14, off.getY() + 10, 140, 24), L.body(16.f, true), p.fg);
+            ui::text(g, u8("· ") + (presetIndex >= 0 ? u8(ui::presets()[(size_t)presetIndex].name) : juce::String("Custom")),
                      juce::Rectangle<int>(off.getX() + 140, off.getY() + 10, 220, 24), L.body(14.f), p.muted);
             g.setColour(p.line);
             g.fillRect(off.getX(), off.getBottom() - 50, off.getWidth(), (int)p.lineW);
         } else if (currentView == View::Advanced) {
-            ui::text(g, u8("Réglages avancés"), juce::Rectangle<int>(off.getX() + 130, off.getY() + 6, 240, 44), L.body(16.f, true), p.fg);
+            ui::text(g, u8("Advanced settings"), juce::Rectangle<int>(off.getX() + 130, off.getY() + 6, 240, 44), L.body(16.f, true), p.fg);
         }
         if (currentView != View::Character) {
             g.setColour(p.line);
@@ -1217,7 +1217,7 @@ public:
 
 private:
     // ================================================================ footer
-    juce::TextButton diagBtn{u8("Rien ne sort ? Diagnostic du branchement")};
+    juce::TextButton diagBtn{u8("Nothing coming out? Routing check")};
 
     void buildFooter() {
         styleButton(diagBtn, "right", false, 13.5f);
@@ -1246,12 +1246,12 @@ private:
             ui::text(g, t, r.removeFromLeft(tw).withTrimmedLeft(6), L.body(13.f), p.muted);
             r.removeFromLeft(14);
         };
-        hint("Tab", u8("réglage suivant"));
-        hint(u8("← →"), u8("régler"));
-        hint("Maj", u8("fin"));
-        hint("Espace", u8("répondre oui/non"));
-        hint("F", u8("figer"));
-        hint("?", "aide");
+        hint("Tab", u8("next control"));
+        hint(u8("← →"), u8("adjust"));
+        hint("Shift", u8("fine"));
+        hint("Space", u8("answer on/off"));
+        hint("F", u8("freeze"));
+        hint("?", "help");
     }
 
     // ================================================================ welcome
@@ -1272,14 +1272,14 @@ private:
 
     void buildWelcome() {
         addChildComponent(welcome);
-        welcome.setTitle("Bienvenue");
+        welcome.setTitle("Welcome");
         welcome.setFocusContainerType(FocusContainerType::keyboardFocusContainer);
         welcome.painter = [this](juce::Graphics& g) { paintWelcome(g); };
         struct S { const char* t; const char* d; const char* icon; };
-        const S srcs[] = {{"Un instrument", "Guitare, piano, cuivre… par le micro ou la carte son.", "guitar"},
-                          {"Voix ou oiseaux", "Sons aigus, rapides, glissés. Écoute Bright.", "mic"},
-                          {"Un clavier MIDI", "Notes exactes, réponse instantanée.", "keys"},
-                          {"Les deux", "Il écoute l'audio et le MIDI en même temps.", "both"}};
+        const S srcs[] = {{"An instrument", "Guitar, piano, brass… through a mic or your audio interface.", "guitar"},
+                          {"Voice or birds", "High, fast, gliding sounds. Bright listening.", "mic"},
+                          {"A MIDI keyboard", "Exact notes, instant answers.", "keys"},
+                          {"Both", "It listens to audio and MIDI at the same time.", "both"}};
         for (int i = 0; i < 4; ++i) {
             auto* c = welcomeSources.add(new Card(u8(srcs[i].t), u8(srcs[i].d), srcs[i].icon));
             c->setRadioGroupId(5300);
@@ -1291,7 +1291,7 @@ private:
             welcome.addAndMakeVisible(c);
         }
         styleButton(welcomeMeasure, "wave", false, 15.f);
-        welcomeMeasure.setButtonText(u8("Écouter 3 s de silence"));
+        welcomeMeasure.setButtonText(u8("Listen to 3 s of silence"));
         welcomeMeasure.onClick = [this] { proc.requestCalibration(); };
         welcome.addAndMakeVisible(welcomeMeasure);
         for (int i = 0; i < (int)ui::presets().size(); ++i) {
@@ -1302,7 +1302,7 @@ private:
         }
         styleButton(welcomeStart, "right", true, 16.f);
         welcomeStart.getProperties().set("iconRight", true);
-        welcomeStart.setButtonText(u8("Commencer à jouer"));
+        welcomeStart.setButtonText(u8("Start playing"));
         welcomeStart.onClick = [this] {
             settings.welcomeDone = true;
             settings.save();
@@ -1350,8 +1350,8 @@ private:
         g.fillAll(p.bg);
         panel(g, p, wMain);
         auto r = wMain.reduced(24, 18);
-        ui::text(g, u8("Bienvenue. Jouez, il répond."), r.removeFromTop(38), L.mono(24.f), p.fg);
-        ui::text(g, u8("Trois questions et vous dialoguez. Tout se change plus tard, rien ne peut casser."), r.removeFromTop(32).withTrimmedBottom(8), L.body(16.f), p.muted);
+        ui::text(g, u8("Welcome. You play, it answers."), r.removeFromTop(38), L.mono(24.f), p.fg);
+        ui::text(g, u8("Three questions and you're playing together. Everything can be changed later; nothing can break."), r.removeFromTop(32).withTrimmedBottom(8), L.body(16.f), p.muted);
         auto step = [&](const char* n, const juce::String& t) {
             auto s = r.removeFromTop(36);
             auto b = s.removeFromLeft(28).withSizeKeepingCentre(28, 28);
@@ -1360,45 +1360,45 @@ private:
             ui::text(g, n, b, L.mono(14.f), p.bg, juce::Justification::centred);
             ui::text(g, t, s.withTrimmedLeft(10), L.body(18.f, true), p.fg);
         };
-        step("1", u8("Qu'allez-vous jouer ?"));
+        step("1", u8("What will you play?"));
         r.removeFromTop(118 + 14);
-        step("2", u8("Apprenez-lui votre silence"));
+        step("2", u8("Teach it your silence"));
         auto m = r.removeFromTop(52);
         m.removeFromLeft(262);
         const int cs = proc.calibState.load();
-        juce::String t = cs == 1 ? u8("Mesure en cours… ne jouez pas (") + juce::String(juce::roundToInt(proc.calibProgress.load() * 100)) + " %)."
-                       : cs == 2 ? u8("Bruit de fond ") + juce::String(juce::roundToInt(proc.calibNoiseDb.load())) + u8(" dB. Seuil placé juste au-dessus, à ")
-                                       + juce::String(juce::roundToInt(proc.calibResultDb.load())) + u8(" dB. Il ne prendra plus votre souffle pour une note.")
-                                 : u8("Ne jouez pas pendant 3 secondes : il mesure le bruit de la pièce et place le seuil juste au-dessus.");
+        juce::String t = cs == 1 ? u8("Measuring… don't play (") + juce::String(juce::roundToInt(proc.calibProgress.load() * 100)) + " %)."
+                       : cs == 2 ? u8("Room noise ") + juce::String(juce::roundToInt(proc.calibNoiseDb.load())) + u8(" dB. Threshold set just above, at ")
+                                       + juce::String(juce::roundToInt(proc.calibResultDb.load())) + u8(" dB. Your breathing won't be mistaken for a note.")
+                                 : u8("Don't play for 3 seconds: it measures the room noise and sets the threshold just above it.");
         ui::text(g, t, m, L.body(14.f), p.fg, juce::Justification::centredLeft, 2);
         r.removeFromTop(14);
-        step("3", u8("Quel partenaire voulez-vous ?"));
-        ui::text(g, u8("Il commencera à répondre dès votre première phrase."), juce::Rectangle<int>(wMain.getX() + 290, wMain.getBottom() - 70, 420, 52),
+        step("3", u8("What kind of partner do you want?"));
+        ui::text(g, u8("It will start answering after your first phrase."), juce::Rectangle<int>(wMain.getX() + 290, wMain.getBottom() - 70, 420, 52),
                  L.body(14.f), p.muted);
 
         // aside
         g.setColour(p.fg);
         g.fillRect(wAside);
         auto a = wAside.reduced(22, 22);
-        ui::text(g, u8("Comment ça marche"), a.removeFromTop(30), L.mono(17.f), p.bg);
+        ui::text(g, u8("How it works"), a.removeFromTop(30), L.mono(17.f), p.bg);
         a.removeFromTop(10);
-        const char* pts[3][2] = {{"Il écoute", "votre instrument, votre voix ou votre clavier, et retient ce que vous jouez."},
-                                 {"Il attend son tour", ", plus ou moins longtemps selon sa patience."},
-                                 {"Il répond en MIDI", " avec vos propres tournures, dans votre gamme. Le son, c'est le synthé que vous branchez."}};
+        const char* pts[3][2] = {{"It listens", "To your instrument, voice or keyboard, and remembers what you play."},
+                                 {"It waits its turn", "Longer or shorter, depending on its patience."},
+                                 {"It answers in MIDI", "With your own phrases, in your scale. The sound is whatever synth you connect."}};
         for (int i = 0; i < 3; ++i) {
             auto row = a.removeFromTop(104);
             ui::text(g, "0" + juce::String(i + 1), row.removeFromLeft(34), L.mono(14.f), p.signal, juce::Justification::topLeft);
             ui::text(g, u8(pts[i][0]), row.removeFromTop(22), L.body(15.f, true), p.bg, juce::Justification::topLeft);
             ui::text(g, u8(pts[i][1]).trimCharactersAtStart(", "), row, L.body(14.f), p.bg, juce::Justification::topLeft, 4);
         }
-        ui::text(g, u8("Tout se passe sur votre ordinateur. Aucun son ne part sur Internet."), a.removeFromBottom(44), L.body(13.f), p.bg.withAlpha(0.85f),
+        ui::text(g, u8("Everything happens on your computer. No sound goes to the internet."), a.removeFromBottom(44), L.body(13.f), p.bg.withAlpha(0.85f),
                  juce::Justification::bottomLeft, 2);
     }
 
     // ================================================================ dialogs (help, display)
     Overlay help, display;
     juce::OwnedArray<juce::Component> helpItems;
-    juce::TextButton helpClose, displayClose, helpWelcome{u8("Revoir l'accueil")}, helpDiag{u8("Diagnostic du branchement")};
+    juce::TextButton helpClose, displayClose, helpWelcome{u8("Show the welcome again")}, helpDiag{u8("Routing check")};
     juce::OwnedArray<juce::TextButton> themeBtns, sizeBtns;
     juce::OwnedArray<juce::ToggleButton> displayToggles;
     juce::Rectangle<int> dialogR;
@@ -1432,11 +1432,11 @@ private:
 
     void buildHelp() {
         addChildComponent(help);
-        help.setTitle("Aide");
+        help.setTitle("Help");
         help.setFocusContainerType(FocusContainerType::keyboardFocusContainer);
         help.painter = [this](juce::Graphics& g) { paintHelp(g); };
         styleButton(helpClose, "close");
-        helpClose.setTitle("Fermer l'aide");
+        helpClose.setTitle("Close help");
         helpClose.onClick = [this] { closeDialog(help); };
         help.addAndMakeVisible(helpClose);
         styleButton(helpWelcome, "right", false, 14.f);
@@ -1460,29 +1460,29 @@ private:
         auto& L = lookOf(*this);
         const auto& p = L.pal();
         g.fillAll(juce::Colours::black.withAlpha(0.55f));
-        dialogFrame(g, "AIDE", u8("Comment il joue avec vous"));
+        dialogFrame(g, "HELP", u8("How it plays with you"));
         auto r = dialogR.reduced(22, 0).withTrimmedTop(90);
         const char* pts[4][2] = {
-            {"Il écoute", "Il retient vos notes, vos rythmes, vos nuances, et reconnaît la gamme et l'accord."},
-            {"Il attend son tour", "« Quand répond-il ? » règle combien de notes ou de silence il attend. Le compte à rebours vous montre quand il va parler."},
-            {"Il répond en MIDI", "Avec vos propres tournures, plus ou moins fidèles, imitées ou contredites. Le son vient du synthé branché sur sa sortie."},
-            {"La conversation", "Les blocs Vous et Lui des 12 dernières secondes, avec la raison de chaque réponse."}};
+            {"It listens", "It remembers your notes, rhythms and dynamics, and recognises the scale and the chord."},
+            {"It waits its turn", "\u201cWhen does it answer?\u201d sets how many notes or how much silence it waits for. The countdown shows when it's about to speak."},
+            {"It answers in MIDI", "With your own phrases, quoted or reshuffled, imitated or contradicted. The sound comes from the synth on its output."},
+            {"The conversation", "You and It blocks for the last 12 seconds, with the reason for each answer."}};
         for (auto& pt : pts) {
             auto row = r.removeFromTop(86);
             ui::text(g, u8(pt[0]), row.removeFromTop(22), L.body(15.5f, true), p.fg);
             ui::text(g, u8(pt[1]), row, L.body(14.f), p.fg, juce::Justification::topLeft, 3);
         }
         r.removeFromTop(6);
-        ui::text(g, "Clavier", r.removeFromTop(24), L.body(15.5f, true), p.fg);
+        ui::text(g, "Keyboard", r.removeFromTop(24), L.body(15.5f, true), p.fg);
         paintShortcuts(g, r.removeFromTop(5 * 30));
     }
 
     void paintShortcuts(juce::Graphics& g, juce::Rectangle<int> r) {
         auto& L = lookOf(*this);
         const auto& p = L.pal();
-        const char* keys[10][2] = {{"Tab", "Réglage suivant"}, {"Maj+Tab", "Réglage précédent"}, {"← →", "Régler"}, {"Maj", "Réglage fin"},
-                                   {"Espace", "Répondre oui / non"}, {"F", "Figer la mémoire"}, {"S", "Mesurer le silence"}, {"1 à 6", "Choisir un caractère"},
-                                   {"Suppr", "Remettre par défaut"}, {"Échap", "Fermer, revenir"}};
+        const char* keys[10][2] = {{"Tab", "Next control"}, {"Shift+Tab", "Previous control"}, {"← →", "Adjust"}, {"Shift", "Fine adjust"},
+                                   {"Space", "Answer on / off"}, {"F", "Freeze memory"}, {"S", "Measure silence"}, {"1 to 6", "Pick a character"},
+                                   {"Del", "Back to default"}, {"Esc", "Close, go back"}};
         g.setColour(p.hair);
         g.drawRect(r.toFloat(), 1.5f);
         const int cw = r.getWidth() / 2, rh = r.getHeight() / 5;
@@ -1500,19 +1500,19 @@ private:
 
     void buildDisplay() {
         addChildComponent(display);
-        display.setTitle(u8("Affichage et accessibilité"));
+        display.setTitle(u8("Display and accessibility"));
         display.setFocusContainerType(FocusContainerType::keyboardFocusContainer);
         display.painter = [this](juce::Graphics& g) { paintDisplay(g); };
         styleButton(displayClose, "close");
-        displayClose.setTitle(u8("Fermer les réglages d'affichage"));
+        displayClose.setTitle(u8("Close display settings"));
         displayClose.onClick = [this] { closeDialog(display); };
         display.addAndMakeVisible(displayClose);
-        const char* themes[] = {"Papier", "Encre", "Contraste max"};
+        const char* themes[] = {"Paper", "Ink", "Max contrast"};
         for (int i = 0; i < 3; ++i) {
             auto* b = themeBtns.add(new juce::TextButton(themes[i]));
             styleButton(*b, {}, false, 14.f);
             b->setRadioGroupId(5400);
-            b->setDescription(u8("Thème"));
+            b->setDescription(u8("Theme"));
             b->onClick = [this, i] { settings.theme = (ui::Theme)i; settings.save(); };
             display.addAndMakeVisible(b);
         }
@@ -1521,15 +1521,15 @@ private:
             auto* b = sizeBtns.add(new juce::TextButton(sizes[i]));
             styleButton(*b, {}, false, 14.f);
             b->setRadioGroupId(5401);
-            b->setDescription(u8("Taille du texte : la fenêtre grandit avec le texte."));
+            b->setDescription(u8("Text size: the window grows with the text."));
             b->onClick = [this, i] { editor.applyScale(1.f + 0.25f * (float)i); };
             display.addAndMakeVisible(b);
         }
         const char* toggles[4][2] = {
-            {"Annoncer ce qu'il fait", "Le lecteur d'écran dit « il écoute », « il répond », et la gamme ou l'accord quand ils changent."},
-            {"Signal visuel quand il répond", "Un cadre orange fixe autour du plugin pendant sa réponse, visible de loin, sans clignoter."},
-            {"Réduire les animations", "La conversation avance par pas au lieu de défiler."},
-            {"Formes en plus des couleurs", "Vous ■ et lui ◆ se distinguent aussi par la forme, pas seulement par la couleur."}};
+            {"Announce what it does", "Your screen reader says \u201clistening\u201d, \u201canswering\u201d, and the scale or chord when they change."},
+            {"Visual signal when it answers", "A steady orange frame around the plugin while it answers, visible from afar, no flashing."},
+            {"Reduce motion", "The conversation moves in steps instead of scrolling."},
+            {"Shapes as well as colours", "You \u25a0 and it \u25c6 differ by shape too, not only by colour."}};
         for (int i = 0; i < 4; ++i) {
             auto* t = displayToggles.add(new juce::ToggleButton(u8(toggles[i][0])));
             t->getProperties().set("desc", u8(toggles[i][1]));
@@ -1578,17 +1578,17 @@ private:
         auto& L = lookOf(*this);
         const auto& p = L.pal();
         g.fillAll(juce::Colours::black.withAlpha(0.55f));
-        dialogFrame(g, u8("AFFICHAGE ET ACCESSIBILITÉ"), u8("Gardé pour tous vos projets"));
+        dialogFrame(g, u8("DISPLAY AND ACCESSIBILITY"), u8("Kept for all your projects"));
         auto r = dialogR.reduced(22, 0).withTrimmedTop(84);
-        ui::text(g, u8("Thème"), r.removeFromTop(28), L.body(15.5f, true), p.fg);
+        ui::text(g, u8("Theme"), r.removeFromTop(28), L.body(15.5f, true), p.fg);
         r.removeFromTop(48 + 16);
-        ui::text(g, "Taille du texte", r.removeFromTop(28), L.body(15.5f, true), p.fg);
+        ui::text(g, "Text size", r.removeFromTop(28), L.body(15.5f, true), p.fg);
         r.removeFromTop(48);
-        ui::text(g, u8("La fenêtre grandit avec le texte : rien n'est coupé."), r.removeFromTop(26), L.body(13.f), p.muted);
-        ui::text(g, "Voir et entendre", r.removeFromTop(26), L.body(15.5f, true), p.fg);
+        ui::text(g, u8("The window grows with the text: nothing gets cut off."), r.removeFromTop(26), L.body(13.f), p.muted);
+        ui::text(g, "Seeing and hearing", r.removeFromTop(26), L.body(15.5f, true), p.fg);
         r.removeFromTop(4 * 70);
         r.removeFromTop(8);
-        ui::text(g, "Clavier", r.removeFromTop(24), L.body(15.5f, true), p.fg);
+        ui::text(g, "Keyboard", r.removeFromTop(24), L.body(15.5f, true), p.fg);
         paintShortcuts(g, r.removeFromTop(5 * 30));
     }
 
@@ -1617,9 +1617,9 @@ private:
         setTitle(u8("LPF Dialogue. ") + st.text);
         if (!settings.speak) { lastPhase = phase; return; }
         if (phase != lastPhase && t - lastAnnounce > 1.0) {
-            const juce::String w = phase == (int)lpfd::Engine::Phase::Answering ? u8("Il répond")
-                                 : phase == (int)lpfd::Engine::Phase::Listening ? u8("Il écoute")
-                                 : phase == (int)lpfd::Engine::Phase::Waiting ? u8("Il attend") : juce::String();
+            const juce::String w = phase == (int)lpfd::Engine::Phase::Answering ? u8("Answering")
+                                 : phase == (int)lpfd::Engine::Phase::Listening ? u8("Listening")
+                                 : phase == (int)lpfd::Engine::Phase::Waiting ? u8("Waiting") : juce::String();
             if (w.isNotEmpty()) juce::AccessibilityHandler::postAnnouncement(w, juce::AccessibilityHandler::AnnouncementPriority::low);
             lastAnnounce = t;
             lastPhase = phase;
@@ -1631,7 +1631,7 @@ private:
         }
         if (harmonyPending && t - harmonyChangedAt > 2.0 && keyRoot >= 0) {
             harmonyPending = false;
-            juce::AccessibilityHandler::postAnnouncement(u8("Gamme ") + keyText(keyRoot, scaleType) + u8(", accord ") + chordText(chordRoot, chordType),
+            juce::AccessibilityHandler::postAnnouncement(u8("Scale ") + keyText(keyRoot, scaleType) + u8(", chord ") + chordText(chordRoot, chordType),
                                                          juce::AccessibilityHandler::AnnouncementPriority::low);
         }
     }

@@ -45,9 +45,9 @@ struct Harmony {
     int chord = Maj;
     uint16_t chordMask = 0;
     float chordConfidence = 0.f;
-    static const char* scaleName(int s);   // French
+    static const char* scaleName(int s);
     static const char* chordSuffix(int c);
-    static const char* pcName(int pc);     // Do, Ré, ...
+    static const char* pcName(int pc);     // C, C#, D, ... (same as pcLetter)
     static const char* pcLetter(int pc);   // C, D, ... (chord symbols)
 };
 

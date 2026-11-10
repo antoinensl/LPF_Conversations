@@ -96,7 +96,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |
-            Plugin VST3, AU (macOS) et Standalone, plus l'outil en ligne de commande.
-            Binaires non signés : sur Mac, après téléchargement, `xattr -dr com.apple.quarantine` sur le .vst3, le .component et l'app.
-            Voir le README pour le branchement dans Reaper, Ableton et la version autonome.
+            VST3, AU (macOS) and Standalone plugin, plus the command-line tool.
+            Unsigned binaries: see "Install" in the README (macOS quarantine, Windows unblock).
+            The README also covers routing in Reaper, Ableton Live and the standalone app.
           files: dist/*.zip

@@ -60,7 +60,7 @@ public:
     // the conversation, for the display (read on the message thread)
     const lpfd::Timeline& timeline() const { return engine.timeline(); }
 
-    // "Mesurer le silence": listens 3 s, then proposes a gate just above the room noise
+    // "Measure silence": listens 3 s, then proposes a gate just above the room noise
     void requestCalibration() { calibRequest.store(true); }
     std::atomic<int> calibState{0};             // 0 idle, 1 measuring, 2 done (result in calibResultDb)
     std::atomic<float> calibProgress{0.f}, calibNoiseDb{-120.f}, calibResultDb{-55.f};

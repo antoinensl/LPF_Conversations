@@ -109,8 +109,8 @@ static uint16_t rotateMask(uint16_t m, int root) {
 static int popcount12(uint16_t m) { int c = 0; for (int i = 0; i < 12; ++i) c += (m >> i) & 1; return c; }
 
 const char* Harmony::scaleName(int s) {
-    static const char* n[] = {"majeur", "mineur", "dorien", "mixolydien", "phrygien", "lydien",
-                              "mineur harmonique", "penta majeure", "penta mineure", "blues", "par tons"};
+    static const char* n[] = {"major", "minor", "dorian", "mixolydian", "phrygian", "lydian",
+                              "harmonic minor", "major pentatonic", "minor pentatonic", "blues", "whole tone"};
     return s >= 0 && s < NumScales ? n[s] : "";
 }
 const char* Harmony::chordSuffix(int c) {
@@ -118,7 +118,7 @@ const char* Harmony::chordSuffix(int c) {
     return c >= 0 && c < NumChords ? n[c] : "";
 }
 const char* Harmony::pcName(int pc) {
-    static const char* n[] = {"Do", "Do#", "R\xc3\xa9", "Mib", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "Sib", "Si"};
+    static const char* n[] = {"C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"};
     return pc >= 0 && pc < 12 ? n[pc] : "";
 }
 const char* Harmony::pcLetter(int pc) {

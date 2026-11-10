@@ -74,12 +74,12 @@ void DisplaySettings::save() {
 // ------------------------------------------------------------------ presets
 const std::vector<Preset>& presets() {
     static const std::vector<Preset> p = {
-        {"Écho", "Répond à chaque note, tout de suite.", 0.f, 1.f, 0.1f, 0.f, 0.4f, 0.2f},
-        {"Ping-pong", "Chacun son tour, phrase après phrase.", 0.4f, 0.f, 0.2f, 0.1f, 0.5f, 0.3f},
-        {"Partenaire", "Écoute, relance, invente un peu.", 0.5f, 0.3f, 0.3f, 0.35f, 0.5f, 0.5f},
-        {"Contradicteur", "Prend le contre-pied de ce que vous jouez.", 0.45f, 0.4f, 0.85f, 0.3f, 0.5f, 0.4f},
-        {"Citations", "Ne rejoue que vos propres tournures.", 0.6f, 0.f, 0.f, 0.f, 0.7f, 0.2f},
-        {"Oiseau", "Courtes réponses vives. Va bien avec l'écoute Bright.", 0.2f, 0.6f, 0.3f, 0.4f, 0.3f, 0.6f},
+        {"Echo", "Answers every note, right away.", 0.f, 1.f, 0.1f, 0.f, 0.4f, 0.2f},
+        {"Ping-pong", "Taking turns, phrase after phrase.", 0.4f, 0.f, 0.2f, 0.1f, 0.5f, 0.3f},
+        {"Partner", "Listens, picks up, invents a little.", 0.5f, 0.3f, 0.3f, 0.35f, 0.5f, 0.5f},
+        {"Contrarian", "Takes the opposite of what you play.", 0.45f, 0.4f, 0.85f, 0.3f, 0.5f, 0.4f},
+        {"Quotes", "Only plays back your own phrases.", 0.6f, 0.f, 0.f, 0.f, 0.7f, 0.2f},
+        {"Bird", "Short, lively answers. Goes well with Bright listening.", 0.2f, 0.6f, 0.3f, 0.4f, 0.3f, 0.6f},
     };
     return p;
 }

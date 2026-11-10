@@ -15,34 +15,34 @@ juce::AudioProcessorValueTreeState::ParameterLayout DialogueProcessor::createLay
     p.push_back(pct("patience", u8("Patience"), 0.5f));
     p.push_back(pct("interruption", u8("Interruption"), 0.3f));
     p.push_back(std::make_unique<AudioParameterFloat>(
-        ParameterID{"length", 1}, u8("Longueur"), NormalisableRange<float>(0.25f, 2.f, 0.01f), 1.f,
+        ParameterID{"length", 1}, u8("Length"), NormalisableRange<float>(0.25f, 2.f, 0.01f), 1.f,
         AudioParameterFloatAttributes().withStringFromValueFunction(
             [](float v, int) { return "x" + String(v, 2); })));
-    p.push_back(pct("memory", u8("Mémoire"), 0.5f));
-    p.push_back(pct("fidelity", u8("Fidélité"), 0.6f));
-    p.push_back(pct("contrast", u8("Contraste"), 0.2f));
-    p.push_back(pct("scale", u8("Tonalité"), 0.7f));
-    p.push_back(std::make_unique<AudioParameterInt>(ParameterID{"low", 1}, u8("Note basse"), 0, 127, 36));
-    p.push_back(std::make_unique<AudioParameterInt>(ParameterID{"high", 1}, u8("Note haute"), 0, 127, 96));
-    p.push_back(pct("sensitivity", u8("Sensibilité"), 0.5f));
+    p.push_back(pct("memory", u8("Memory"), 0.5f));
+    p.push_back(pct("fidelity", u8("Fidelity"), 0.6f));
+    p.push_back(pct("contrast", u8("Contrast"), 0.2f));
+    p.push_back(pct("scale", u8("Scale lock"), 0.7f));
+    p.push_back(std::make_unique<AudioParameterInt>(ParameterID{"low", 1}, u8("Lowest note"), 0, 127, 36));
+    p.push_back(std::make_unique<AudioParameterInt>(ParameterID{"high", 1}, u8("Highest note"), 0, 127, 96));
+    p.push_back(pct("sensitivity", u8("Sensitivity"), 0.5f));
     p.push_back(std::make_unique<AudioParameterFloat>(
-        ParameterID{"gate", 1}, u8("Seuil"), NormalisableRange<float>(-80.f, -20.f, 0.5f), -55.f,
+        ParameterID{"gate", 1}, u8("Threshold"), NormalisableRange<float>(-80.f, -20.f, 0.5f), -55.f,
         AudioParameterFloatAttributes().withLabel("dB")));
     p.push_back(std::make_unique<AudioParameterChoice>(
-        ParameterID{"grid", 1}, u8("Grille"), StringArray{u8("Libre"), "1/4", "1/8", "1/16"}, 0));
-    p.push_back(std::make_unique<AudioParameterInt>(ParameterID{"channel", 1}, u8("Canal MIDI"), 1, 16, 1));
-    p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"freeze", 1}, u8("Figer la mémoire"), false));
-    p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"respond", 1}, u8("Répondre"), true));
+        ParameterID{"grid", 1}, u8("Grid"), StringArray{"Free", "1/4", "1/8", "1/16"}, 0));
+    p.push_back(std::make_unique<AudioParameterInt>(ParameterID{"channel", 1}, u8("Output channel"), 1, 16, 1));
+    p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"freeze", 1}, u8("Freeze memory"), false));
+    p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"respond", 1}, u8("Answer"), true));
     p.push_back(std::make_unique<AudioParameterChoice>(
-        ParameterID{"mode", 1}, u8("Écoute"), StringArray{"Instrument", "Bright"}, 0));
-    p.push_back(pct("random", u8("Hasard"), 0.2f));
-    p.push_back(pct("humanize", u8("Humanisation"), 0.3f));
+        ParameterID{"mode", 1}, u8("Listening mode"), StringArray{"Instrument", "Bright"}, 0));
+    p.push_back(pct("random", u8("Randomness"), 0.2f));
+    p.push_back(pct("humanize", u8("Humanize"), 0.3f));
     p.push_back(std::make_unique<AudioParameterChoice>(
         ParameterID{"source", 1}, u8("Source"), StringArray{"Audio", "MIDI", "Audio + MIDI"}, 0));
     {
-        StringArray ch{u8("Tous")};
+        StringArray ch{u8("All")};
         for (int i = 1; i <= 16; ++i) ch.add(String(i));
-        p.push_back(std::make_unique<AudioParameterChoice>(ParameterID{"midiin", 1}, u8("Canal d'entrée"), ch, 0));
+        p.push_back(std::make_unique<AudioParameterChoice>(ParameterID{"midiin", 1}, u8("Input channel"), ch, 0));
     }
     p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"thru", 1}, u8("MIDI thru"), false));
     return {p.begin(), p.end()};
