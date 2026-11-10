@@ -451,8 +451,9 @@ private:
                 clearBtn.setButtonText(u8("Confirmer"));
                 clearBtn.getProperties().set("accent", true);
                 clearBtn.repaint();
-                juce::Timer::callAfterDelay(3000, [safe = juce::Component::SafePointer<Content>(this)] {
-                    if (safe) safe->disarmClear();
+                juce::Component::SafePointer<Content> safe(this);
+                juce::Timer::callAfterDelay(3000, [safe] {
+                    if (safe != nullptr) safe->disarmClear();
                 });
             } else {
                 proc.requestClear();
