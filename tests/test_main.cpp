@@ -117,6 +117,13 @@ static Capture runEngine(Engine& e, std::vector<float> sig, int B = 256,
         e.process(sig.data() + pos, n, tr, cap);
         g_countAllocs = false;
     }
+    // keep going in silence until the last answer is over (answers can be long)
+    std::vector<float> zeros((size_t)B, 0.f);
+    for (int64_t pos = (int64_t)sig.size(), lim = pos + (int64_t)(SR * 180.0); e.answering() && pos < lim; pos += B) {
+        cap.base = pos;
+        if (tr.valid) tr.ppqAtBlockStart = pos / (SR * 60.0 / tr.bpm);
+        e.process(zeros.data(), B, tr, cap);
+    }
     return cap;
 }
 
@@ -477,9 +484,9 @@ static void testGrid() {
     CHECK(off == 0, "grid: %d notes off the 1/16 grid", off);
 }
 
-static void testNoAllocAndFuzz() {
-    std::printf("[real-time safety, fuzz]\n");
-    std::mt19937 rng(7);
+static void testNoAllocAndFuzz(uint32_t seed = 7) {
+    std::printf("[real-time safety, fuzz seed %u]\n", seed);
+    std::mt19937 rng(seed);
     std::uniform_real_distribution<float> u(0.f, 1.f);
     for (int run = 0; run < 12; ++run) {
         Params p;
@@ -503,7 +510,13 @@ static void testNoAllocAndFuzz() {
         auto cap = runEngine(e, sig, B, tr, true);
         Capture& all = cap;
         std::string why;
-        CHECK(balanced(all, why), "fuzz run %d: %s", run, why.c_str());
+        const bool ok = balanced(all, why);
+        CHECK(ok, "fuzz run %d: %s", run, why.c_str());
+        if (!ok && std::getenv("LPFD_FUZZ_DEBUG")) {
+            const int sp = std::atoi(why.c_str() + why.find_last_of(' ') + 1);
+            for (auto& m : all.ev) if (m.pitch == sp) std::printf("    %10lld %s ch%d p%d v%d\n", (long long)m.t, m.on ? "ON " : "off", m.ch, m.pitch, m.vel);
+            std::printf("    total samples %zu, events %zu\n", sig.size(), all.ev.size());
+        }
 #ifdef LPFD_ALLOC_CHECK
         CHECK(g_allocs == 0, "fuzz run %d: %ld allocations in process()", run, (long)g_allocs);
 #endif
@@ -910,6 +923,11 @@ static void testTimelineAndPhase() {
 }
 
 int main() {
+    if (const char* n = std::getenv("LPFD_FUZZ_SEEDS")) {   // extra fuzzing: LPFD_FUZZ_SEEDS=200
+        for (uint32_t sd = 1; sd <= (uint32_t)std::atoi(n); ++sd) testNoAllocAndFuzz(sd);
+        std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
+        return g_fail ? 1 : 0;
+    }
     testPitchAccuracy();
     testMelodyAndRepeats();
     testExpressive();
