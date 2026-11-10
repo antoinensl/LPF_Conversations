@@ -3,6 +3,10 @@ project(LPFDialogue VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+  add_compile_definitions(_USE_MATH_DEFINES NOMINMAX)   # M_PI on Windows
+  add_compile_options(/utf-8)                           # sources are UTF-8 (French text)
+endif()
 if(APPLE)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "")
   set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "")
