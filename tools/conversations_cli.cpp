@@ -1,7 +1,7 @@
-// LPF Dialogue — offline tool: play a WAV into the engine, get its answers as a MIDI file
+// Conversations — offline tool: play a WAV into the engine, get its answers as a MIDI file
 // (and optionally a WAV with your audio on the left and a simple synth answer on the right).
 //
-//   lpf_dialogue_cli input.wav|input.mid answers.mid [--render out.wav] [--patience 0.5] [--interruption 0.3]
+//   conversations_cli input.wav|input.mid answers.mid [--render out.wav] [--patience 0.5] [--interruption 0.3]
 //                    [--length 1] [--memory 0.5] [--fidelity 0.6] [--contrast 0.2] [--scale 0.7]
 //                    [--low 36] [--high 96] [--sensitivity 0.5] [--gate -55] [--seed 1]
 //                    [--bright 1] [--random 0.2] [--humanize 0.3]

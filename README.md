@@ -1,4 +1,7 @@
-# LPF Dialogue
+# Conversations
+
+By Life Pass Filter. In Reaper and other hosts it shows as **Conversations (Life Pass Filter)**. (Before v0.6.1 it was called LPF Dialogue: see "Install" to remove the old copy.)
+
 
 A plugin that listens to what you play (any sound: guitar, voice, field recordings… or MIDI) and answers you in MIDI. Everything runs locally: no network, no remote AI.
 
@@ -35,30 +38,32 @@ Download the archive for your system from the latest release: https://github.com
 
 | File | What it's for |
 |---|---|
-| `LPF Dialogue.vst3` | The plugin, for Reaper and other music software. The only file you really need. |
-| `LPF Dialogue.component` (Mac) | The same plugin in AU format, for Logic or GarageBand. |
-| `LPF Dialogue.app` (Mac) / `LPF Dialogue.exe` (Windows) | The standalone app: the plugin without any music software. For Ableton Live (which doesn't receive MIDI from a plugin), or to play straight into a synth or the Ableton Move over USB. Optional. |
-| `lpf_dialogue_cli` / `lpf_dialogue_cli.exe` | The command-line tool (see "Offline tool" below): a WAV or MIDI file in, its answers out as a MIDI file. Optional. |
+| `Conversations.vst3` | The plugin, for Reaper and other music software. The only file you really need. |
+| `Conversations.component` (Mac) | The same plugin in AU format, for Logic or GarageBand. |
+| `Conversations.app` (Mac) / `Conversations.exe` (Windows) | The standalone app: the plugin without any music software. For Ableton Live (which doesn't receive MIDI from a plugin), or to play straight into a synth or the Ableton Move over USB. Optional. |
+| `conversations_cli` / `conversations_cli.exe` | The command-line tool (see "Offline tool" below): a WAV or MIDI file in, its answers out as a MIDI file. Optional. |
 | `README.md` | This manual. |
 
 **Mac**
 
-1. Unzip `LPF-Dialogue-macOS.zip`.
-2. Copy `LPF Dialogue.vst3` to `~/Library/Audio/Plug-Ins/VST3` and `LPF Dialogue.component` to `~/Library/Audio/Plug-Ins/Components`.
+1. Unzip `LPF-Conversations-macOS.zip`.
+2. Copy `Conversations.vst3` to `~/Library/Audio/Plug-Ins/VST3` and `Conversations.component` to `~/Library/Audio/Plug-Ins/Components`.
 3. The files are not signed. In Terminal, once per file:
-   `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"LPF Dialogue.vst3"` (same for the `.component` and the app).
+   `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Conversations.vst3"` (same for the `.component` and the app).
 4. In Reaper: Options › Preferences › Plug-ins › VST › Re-scan.
 
 **Windows**
 
-1. Before unzipping: right-click `LPF-Dialogue-Windows.zip` › Properties › tick **Unblock** › OK.
-2. Unzip, then copy the whole `LPF Dialogue.vst3` folder to `C:\Program Files\Common Files\VST3` (Windows asks for administrator permission).
-3. In Reaper: Options › Preferences › Plug-ins › VST: check that this folder is in the list, then **Re-scan**. The plugin is called "LPF Dialogue" (Life Pass Filter).
+1. Before unzipping: right-click `LPF-Conversations-Windows.zip` › Properties › tick **Unblock** › OK.
+2. Unzip, then copy the whole `Conversations.vst3` folder to `C:\Program Files\Common Files\VST3` (Windows asks for administrator permission).
+3. In Reaper: Options › Preferences › Plug-ins › VST: check that this folder is in the list, then **Re-scan**. The plugin is called "Conversations (Life Pass Filter)".
 4. The standalone app is not signed: on first launch, "Windows protected your PC" › **More info › Run anyway**.
 5. If a message mentions `VCRUNTIME140.dll`: install the "Microsoft Visual C++ Redistributable" (x64) from Microsoft's website.
 6. For Ableton Live: run the standalone app, send its MIDI output to a **loopMIDI** virtual port (free), and pick that port as the MIDI input of the synth track in Live.
 
-**Linux**: copy `LPF Dialogue.vst3` to `~/.vst3`.
+**Coming from LPF Dialogue (v0.6.0 or earlier)**: delete the old `LPF Dialogue.vst3` (and `LPF Dialogue.component` on Mac), then re-scan. Projects that used it open with Conversations and keep their settings: only the name changed.
+
+**Linux**: copy `Conversations.vst3` to `~/.vst3`.
 
 ## Settings (parameter names in the host)
 
@@ -96,7 +101,7 @@ Some starting points:
 
 ## Routing in Reaper
 
-1. Track 1 (your instrument or mic, monitoring on): insert **LPF Dialogue**.
+1. Track 1 (your instrument or mic, monitoring on): insert **Conversations**.
 2. Track 2: your synth (or LPF Granu, a sampler…).
 3. Send from track 1 to track 2: Route button → *Add new send* → audio **None**, MIDI **All → All**.
 4. Play.
@@ -115,10 +120,10 @@ Watch out for musical feedback: if the answering synth can be heard in the mic, 
 
 ## Offline tool
 
-`lpf_dialogue_cli` runs a WAV **or MIDI** file (.mid, format 0/1, tempo changes supported) through the engine and writes the answers to a MIDI file. It can also render a stereo preview: your playing on the left, the answers played by a small synth on the right.
+`conversations_cli` runs a WAV **or MIDI** file (.mid, format 0/1, tempo changes supported) through the engine and writes the answers to a MIDI file. It can also render a stereo preview: your playing on the left, the answers played by a small synth on the right.
 
 ```
-lpf_dialogue_cli phrase.wav answers.mid --render preview.wav --patience 0.6 --interruption 0 --contrast 0.3
+conversations_cli phrase.wav answers.mid --render preview.wav --patience 0.6 --interruption 0 --contrast 0.3
 ```
 
 Options: `--patience --interruption --length --memory --fidelity --contrast --scale --low --high --sensitivity --gate --seed --bright 1 --random --humanize --lowcut --highcut --dynamics --sustain --bend --bendrange`. Pitch bend is written to the MIDI file. The tool also prints the detected scale and the last chord.
@@ -131,9 +136,9 @@ cmake --build build --config Release
 ctest --test-dir build -C Release
 ```
 
-JUCE 8 is downloaded automatically (or use `-DLPFD_JUCE_DIR=/path/to/JUCE`). On Mac the build is universal (Apple Silicon and Intel). The plugins end up in `build/LPFDialogue_artefacts/Release/`.
+JUCE 8 is downloaded automatically (or use `-DLPFD_JUCE_DIR=/path/to/JUCE`). On Mac the build is universal (Apple Silicon and Intel). The plugins end up in `build/LPFConversations_artefacts/Release/`.
 
-The GitHub Actions workflow (`.github/workflows/build.yml`) builds for macOS, Windows and Linux and runs the tests. On every push to main it publishes (or updates) the release `v<version>`, with the version number read from `CMakeLists.txt` (`project(LPFDialogue VERSION …)`): to ship a new version, bump that number. The binaries are not signed (see "Install").
+The GitHub Actions workflow (`.github/workflows/build.yml`) builds for macOS, Windows and Linux and runs the tests. On every push to main it publishes (or updates) the release `v<version>`, with the version number read from `CMakeLists.txt` (`project(LPFConversations VERSION …)`): to ship a new version, bump that number. The binaries are not signed (see "Install").
 
 Extra fuzzing: `LPFD_FUZZ_SEEDS=40 ./build/lpfd_tests` runs the fuzz test with 40 random seeds.
 

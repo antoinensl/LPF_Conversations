@@ -50,23 +50,23 @@ jobs:
         shell: bash
         run: |
           set -e
-          ART=build/LPFDialogue_artefacts/Release
-          OUT=LPF-Dialogue-${{ matrix.name }}
+          ART=build/LPFConversations_artefacts/Release
+          OUT=LPF-Conversations-${{ matrix.name }}
           mkdir -p "$OUT"
-          cp -R "$ART/VST3/LPF Dialogue.vst3" "$OUT/"
-          if [ -d "$ART/AU" ]; then cp -R "$ART/AU/LPF Dialogue.component" "$OUT/"; fi
-          if [ -d "$ART/Standalone/LPF Dialogue.app" ]; then cp -R "$ART/Standalone/LPF Dialogue.app" "$OUT/";
-          elif [ -f "$ART/Standalone/LPF Dialogue.exe" ]; then cp "$ART/Standalone/LPF Dialogue.exe" "$OUT/";
-          else cp "$ART/Standalone/LPF Dialogue" "$OUT/"; fi
-          CLI=$(find build -maxdepth 3 -type f \( -name lpf_dialogue_cli -o -name lpf_dialogue_cli.exe \) | head -1)
+          cp -R "$ART/VST3/Conversations.vst3" "$OUT/"
+          if [ -d "$ART/AU" ]; then cp -R "$ART/AU/Conversations.component" "$OUT/"; fi
+          if [ -d "$ART/Standalone/Conversations.app" ]; then cp -R "$ART/Standalone/Conversations.app" "$OUT/";
+          elif [ -f "$ART/Standalone/Conversations.exe" ]; then cp "$ART/Standalone/Conversations.exe" "$OUT/";
+          else cp "$ART/Standalone/Conversations" "$OUT/"; fi
+          CLI=$(find build -maxdepth 3 -type f \( -name conversations_cli -o -name conversations_cli.exe \) | head -1)
           cp "$CLI" "$OUT/"
           cp README.md "$OUT/"
           if [ "$RUNNER_OS" = "Windows" ]; then 7z a "$OUT.zip" "$OUT" > /dev/null; else zip -qry "$OUT.zip" "$OUT"; fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LPF-Dialogue-${{ matrix.name }}
-          path: LPF-Dialogue-${{ matrix.name }}.zip
+          name: LPF-Conversations-${{ matrix.name }}
+          path: LPF-Conversations-${{ matrix.name }}.zip
 
   # One release per version: the tag v<version> (from CMakeLists.txt) is created here,
   # so a push to main is enough to publish.
@@ -80,7 +80,7 @@ jobs:
       - name: Version
         id: ver
         run: |
-          V=$(sed -n 's/^project(LPFDialogue VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          V=$(sed -n 's/^project(LPFConversations VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Version $V"
 
@@ -92,7 +92,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
-          name: LPF Dialogue v${{ steps.ver.outputs.version }}
+          name: Conversations v${{ steps.ver.outputs.version }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |

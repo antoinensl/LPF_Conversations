@@ -1,4 +1,4 @@
-// LPF Dialogue — tests on synthetic signals.
+// Conversations — tests on synthetic signals.
 #include <atomic>
 #include <cmath>
 #include <cstdio>

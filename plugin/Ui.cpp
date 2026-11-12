@@ -43,7 +43,7 @@ Palette palette(Theme t) {
 // ------------------------------------------------------------------ settings
 DisplaySettings::DisplaySettings() {
     juce::PropertiesFile::Options o;
-    o.applicationName = "LPF Dialogue";
+    o.applicationName = "Conversations";
     o.filenameSuffix = ".settings";
     o.folderName = "LifePassFilter";
     o.osxLibrarySubFolder = "Application Support";

@@ -1,4 +1,4 @@
-// LPF Dialogue — minimal radix-2 complex FFT (no dependencies).
+// Conversations — minimal radix-2 complex FFT (no dependencies).
 // init() allocates and must be called outside the audio thread.
 #pragma once
 #include <cmath>

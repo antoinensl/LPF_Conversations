@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(LPFDialogue VERSION 0.6.0 LANGUAGES C CXX)
+project(LPFConversations VERSION 0.6.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,8 +30,8 @@ if(LPFD_BUILD_TESTS)
   if(NOT MSVC)
     target_compile_options(lpfd_tests PRIVATE -Wno-mismatched-new-delete)
   endif()
-  add_executable(lpf_dialogue_cli tools/dialogue_cli.cpp)
-  target_link_libraries(lpf_dialogue_cli PRIVATE lpfd_core)
+  add_executable(conversations_cli tools/conversations_cli.cpp)
+  target_link_libraries(conversations_cli PRIVATE lpfd_core)
   enable_testing()
   add_test(NAME lpfd_tests COMMAND lpfd_tests)
 endif()
@@ -54,12 +54,12 @@ if(LPFD_BUILD_PLUGIN)
     list(APPEND LPFD_FORMATS AU)
   endif()
 
-  juce_add_plugin(LPFDialogue
+  juce_add_plugin(LPFConversations
     COMPANY_NAME "Life Pass Filter"
     BUNDLE_ID "com.lifepassfilter.dialogue"
     PLUGIN_MANUFACTURER_CODE Lpfl
     PLUGIN_CODE LpDg
-    PRODUCT_NAME "LPF Dialogue"
+    PRODUCT_NAME "Conversations"
     FORMATS ${LPFD_FORMATS}
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE
@@ -67,20 +67,20 @@ if(LPFD_BUILD_PLUGIN)
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "LPF Dialogue listens to your instrument to answer it."
+    MICROPHONE_PERMISSION_TEXT "Conversations listens to your instrument to answer it."
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
-  juce_add_binary_data(LPFDialogueAssets SOURCES
+  juce_add_binary_data(LPFConversationsAssets SOURCES
     assets/fonts/SpaceMono-Bold.ttf
     assets/fonts/AtkinsonHyperlegible-Regular.ttf assets/fonts/AtkinsonHyperlegible-Bold.ttf)
-  set_target_properties(LPFDialogueAssets PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  set_target_properties(LPFConversationsAssets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-  target_sources(LPFDialogue PRIVATE plugin/PluginProcessor.cpp plugin/PluginEditor.cpp plugin/Ui.cpp)
-  target_compile_definitions(LPFDialogue PUBLIC
+  target_sources(LPFConversations PRIVATE plugin/PluginProcessor.cpp plugin/PluginEditor.cpp plugin/Ui.cpp)
+  target_compile_definitions(LPFConversations PUBLIC
     JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
-  target_link_libraries(LPFDialogue
-    PRIVATE lpfd_core LPFDialogueAssets juce::juce_audio_utils juce::juce_audio_processors
+  target_link_libraries(LPFConversations
+    PRIVATE lpfd_core LPFConversationsAssets juce::juce_audio_utils juce::juce_audio_processors
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags
            juce::juce_recommended_warning_flags)
 endif()

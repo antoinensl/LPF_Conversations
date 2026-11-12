@@ -1,4 +1,4 @@
-// LPF Dialogue — editor: a conversation you can read, settings in plain words.
+// Conversations — editor: a conversation you can read, settings in plain words.
 #include "PluginEditor.h"
 
 using ui::u8;
@@ -306,7 +306,7 @@ public:
     Content(DialogueProcessor& p, ui::DisplaySettings& s, DialogueEditor& e, ui::Look& look)
         : proc(p), settings(s), editor(e) {
         setLookAndFeel(&look);
-        setTitle("LPF Dialogue");
+        setTitle("Conversations");
         setFocusContainerType(FocusContainerType::keyboardFocusContainer);
         buildHeader();
         buildStatus();
@@ -453,7 +453,7 @@ public:
         g.fillRect(hr);
         g.setColour(p.line);
         g.fillRect(0, kHeaderH - (int)p.lineW, W, (int)p.lineW);
-        ui::text(g, "LPF/DIALOGUE", {16, 10, 230, 28}, L.mono(22.f), p.fg);
+        ui::text(g, "CONVERSATIONS", {16, 10, 230, 28}, L.mono(22.f), p.fg);
         ui::text(g, u8("A partner that listens and answers"), {16, 36, 230, 18}, L.body(12.5f), p.muted);
 
         paintStatus(g, L, p);
@@ -1328,7 +1328,7 @@ private:
             {"On the plugin's track: Route button › Add new send to the synth track.",
              "In that send: Audio set to None, MIDI set to All › All.",
              "If the synth filters channels, use the same channel as \u201cAnswers on channel\u201d."},
-            {"Live doesn't receive MIDI from a plugin: open LPF Dialogue as a standalone app.",
+            {"Live doesn't receive MIDI from a plugin: open Conversations as a standalone app.",
              "In its settings, MIDI output: IAC bus (Mac) or loopMIDI (Windows).",
              "In Live, on the synth track: MIDI From › that bus, Monitor set to In."},
             {"Options › Audio/MIDI Settings: pick the audio input and the MIDI output.",
@@ -1775,7 +1775,7 @@ private:
     void announce() {
         const double t = juce::Time::getMillisecondCounterHiRes() * 0.001;
         const auto st = statusText();
-        setTitle(u8("LPF Dialogue. ") + st.text);
+        setTitle(u8("Conversations. ") + st.text);
         if (!settings.speak) { lastPhase = phase; return; }
         if (phase != lastPhase && t - lastAnnounce > 1.0) {
             const juce::String w = phase == (int)lpfd::Engine::Phase::Answering ? u8("Answering")

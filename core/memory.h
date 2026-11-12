@@ -1,4 +1,4 @@
-// LPF Dialogue — memory of what the player played (fixed capacity, real-time safe).
+// Conversations — memory of what the player played (fixed capacity, real-time safe).
 #pragma once
 #include <algorithm>
 #include <cmath>

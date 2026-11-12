@@ -1,4 +1,4 @@
-// LPF Dialogue — real-time listening: onsets, pitch (YIN), level, brightness, noisiness.
+// Conversations — real-time listening: onsets, pitch (YIN), level, brightness, noisiness.
 // prepare() allocates; process() is real-time safe (no allocation, no locks, no I/O).
 #pragma once
 #include <cstdint>

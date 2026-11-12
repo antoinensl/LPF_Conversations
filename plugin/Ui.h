@@ -1,4 +1,4 @@
-// LPF Dialogue — look, fonts, display settings and presets shared by the editor.
+// Conversations — look, fonts, display settings and presets shared by the editor.
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>

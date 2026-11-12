@@ -1,4 +1,4 @@
-// LPF Dialogue — listens to audio, remembers, answers in MIDI.
+// Conversations — listens to audio, remembers, answers in MIDI.
 // prepare() allocates; process() is real-time safe.
 #pragma once
 #include <algorithm>
