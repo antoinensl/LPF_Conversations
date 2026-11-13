@@ -9,23 +9,24 @@ A plugin that listens to what you play (any sound: guitar, voice, field recordin
 - **Memory**: remembers what you played (intervals, rhythms, durations, dynamics, notes used).
 - **Answers**: a variable-order Markov chain over your own playing. It can quote or recombine, imitate or contradict.
 - **Reactivity**: from "reflex" (an answer ~20 ms after each note) to "listening" (it waits for the end of your phrase), with "it cuts in" in between.
-- **Harmony**: detects the scale (11 modes) and the current chord, including strummed chords. The interface shows them, and invented notes use them.
+- **Harmony**: detects the scale (11 modes) and the current chord, including strummed chords. The interface shows them, and invented notes use them. Or you choose the scale: free, fixed (root + type) or your own notes.
+- **Rhythm**: finds the pulse of *your* playing (not the song's tempo), how you divide the beat and your swing. On it, it answers your bars with your rhythmic patterns, more or less varied, or plays along with you, a bar behind or in your gaps.
 - **Human feel**: Randomness (invented notes, ornaments, rests, shifted rhythms) and Humanize (varying reaction delay, micro-timing, phrasing).
 - **Two listening modes**: Instrument, or Bright for birds and voices, and a two-handle range for the pitches it listens for (the low cut also filters out rumble and wind).
-- **Expression**: follows your dynamics (soft/loud), holds its note as long as you hold yours, and can follow your bends and vibrato with pitch bend.
+- **Expression**: velocity that follows you note by note (or imitates the phrase it quotes, opposes you, or stays fixed), holds its note as long as you hold yours, and can follow your bends and vibrato with pitch bend.
 - **MIDI input**: it also listens to a keyboard or a MIDI item, alone or together with audio. Exact pitches, zero-latency answers, held chords recognised exactly.
 
 ## The interface
 
 - **First run**: three questions. What will you play? (instrument, voice or birds, MIDI keyboard, both). Teach it your silence: it measures 3 s of room noise and sets the threshold just above it. What kind of partner do you want? (six ready-made characters). The welcome screen can be reopened from Help or from the three chips at the top.
 - **The state, in plain words**: LISTENING, WAITING (with a countdown of the silence before it answers), ANSWERING, or "your turn". Memory, Freeze and Clear (with confirmation) sit next to it.
-- **The conversation**: the last 12 seconds on two lanes, You and It, with the reason under each answer ("after 0.8 s of silence", "cut in after 5 notes", "reflex").
+- **The conversation**: the last 12 seconds on two lanes, You and It, with the reason under each answer ("after 0.8 s of silence", "cut in after 5 notes", "reflex", "plays along at 100 BPM"). The thickness of each note is its velocity.
 - **What it hears**: level meter with the threshold in orange, a Measure silence button, the detected note, scale and chord.
-- **Its character**: six characters (Echo, Ping-pong, Partner, Contrarian, Quotes, Bird; shortcuts 1 to 6) and six sliders phrased as questions ("When does it answer?", "Does it cut in?"…). Under each slider, a sentence says what it will do.
-- **Advanced settings**: Instrument/Bright listening, the pitches it listens for (two handles on a frequency axis, with a mark on the note it hears), sensitivity, expression (dynamics, held notes, bends and vibrato, your synth's bend range), answer range on an octave strip, memory, quoting, scale lock, grid, source, MIDI channels, MIDI thru.
+- **Its character**: eight characters (Echo, Ping-pong, Partner, Contrarian, Quotes, Bird, Groove, Trading; shortcuts 1 to 8) and seven sliders phrased as questions ("When does it answer?", "Does it cut in?"…). Under each slider, a sentence says what it will do.
+- **Advanced settings**: Instrument/Bright listening, the pitches it listens for (two handles on a frequency axis, with a mark on the note it hears), sensitivity, expression (velocity mode and amount, fixed velocity, the loudness range of your attacks, held notes, bends and vibrato, your synth's bend range), scale (Auto / Free / Fixed / Custom on a one-octave keyboard, and how strictly), answer range on an octave strip, memory, quoting, scale lock, grid, source, MIDI channels, MIDI thru.
 - **Routing check** ("Nothing coming out?" at the bottom): three checks (incoming sound, answers sent in the last minute, your synth), a test note, and the steps for Reaper, Ableton Live and the standalone app.
 - **Display and accessibility** (kept for all projects): Paper, Ink and Max contrast themes; 100, 125 or 150 % size (the window grows, nothing gets cut off; you can also drag the corner); screen-reader announcements (state, scale and chord); a steady orange frame while it answers; reduced motion; shapes as well as colours.
-- **Keyboard**: Tab / Shift+Tab to move between controls (visible focus frame), ← → to adjust, Shift for fine adjustment, Del for the default value, Space to turn answering on/off, F to freeze, S to measure silence, 1 to 6 for the characters, ? for help, Esc to close.
+- **Keyboard**: Tab / Shift+Tab to move between controls (visible focus frame), ← → to adjust, Shift for fine adjustment, Del for the default value, Space to turn answering on/off, F to freeze, S to measure silence, 1 to 8 for the characters, ? for help, Esc to close.
 - Text in Atkinson Hyperlegible (a typeface designed for legibility), titles and values in Space Mono. Contrast ≥ 4.5:1 in all three themes; the bright orange is only used as a background.
 
 Formats: VST3, AU (macOS), Standalone. The plugin passes audio through untouched and adds a MIDI output.
@@ -69,18 +70,22 @@ Download the archive for your system from the latest release: https://github.com
 
 | Setting | Effect |
 |---|---|
-| **Patience** | 0 %: answers every note. 100 %: waits for ~2 s of silence. In between, it answers after a few notes or a short silence. |
+| **Patience** ("When does it answer?") | Far left (under 3 %): **plays along** with you on your pulse (needs Groove; until it finds your pulse, it answers every note). Then: answers every note. 100 %: waits for ~2 s of silence. In between, it answers after a few notes or a short silence. |
+| **Groove** ("Does it follow your rhythm?") | 0 %: free timing, no pulse. Above: once your playing has a clear pulse (shown under "Pulse"), its phrases start on your beat and take the rhythm of your last bars, slot by slot, with your swing; the higher, the tighter on your grid and the fewer rhythmic variations. Pitches over that rhythm: yours (Fidelity) or its own melody. Sounds without pitch (percussion, beatbox) get answers on one or two notes. Reflex answers (every note) stay immediate. |
 | **Interruption** | 0 %: never plays at the same time as you and **stops as soon as you start again**. Up to 50 %: cuts in now and then (twice the value, in % of the chances), and still stops when you start again. From 50 %: answers every time its patience is reached, even if you're still playing. Above 0 %, a note left ringing at the end of a phrase counts as the end of the phrase (it doesn't wait for it to die away). |
 | **Length** | Number of notes in the answer relative to what it just heard (×0.25 to ×2). |
 | **Memory** | 0 %: only remembers the last 8 notes. 100 %: the last 4096. |
-| **Fidelity** | 0 %: recombines freely. 100 %: quotes long fragments of your playing. |
-| **Contrast** | 0 %: imitates. 100 %: opposes (other register, rhythm opposite to your density, inverted contour, opposite dynamics). |
-| **Scale lock** | Probability of staying in the detected scale (or in the notes you played, until the scale is certain). |
+| **Fidelity** | 0 %: recombines freely. 100 %: quotes long fragments of your playing. On your pulse: how often it keeps your own notes over your rhythm (100 %) rather than taking off with a melody of its own (0 %). |
+| **Contrast** | 0 %: imitates. 100 %: opposes (other register, rhythm opposite to your density, inverted contour). On your pulse: the chance that it plays in your gaps instead of on your rhythm. |
+| **Scale** | **Auto**: the scale it hears from you (or the notes you played, until it is sure). **Free**: every note allowed. **Fixed**: a root and one of 11 scale types. **Custom**: the notes you click on the keyboard. |
+| **Scale lock** ("It stays in the scale") | Probability of staying in that scale. |
 | **Randomness** | Adds invented notes: chord tones at the start and end of phrases, scale notes elsewhere. Also adds grace notes, rests, shifted rhythms and a varying answer length. It sometimes lets a chance to answer go by, and says more the next time. |
-| **Humanize** | Varying reaction delay (short in reflex mode, longer when it's patient), micro-timing (±25 ms at most), dynamics arching over the phrase, varying durations, last note held. |
+| **Humanize** | Varying reaction delay (short in reflex mode, longer when it's patient), micro-timing (±25 ms at most), slightly varying velocity, varying durations, last note held. |
 | **Listening mode** | **Instrument**: for guitar and instruments. **Bright**: onsets separated from 15 ms (trills), glides followed note by note. For birds and spoken or sung voice. Picking one also sets its usual band (55 Hz - 2 kHz, or 100 Hz - 10 kHz). |
 | **Low cut / High cut** | The pitches it listens for. Below the low cut, sound is filtered out before listening (rumble, wind, handling noise). Above the high cut, notes are not heard as pitches. |
-| **Dynamics** | 0 %: every answer at the same velocity. 100 %: soft when you play soft, loud when you play loud, spread over the whole velocity range (it learns the range of your attacks, so it works whatever your mic gain). |
+| **Velocity** | **Follows you**: each answer note takes the accent of your note at the same place in your last notes. **Imitates**: the accents of the phrase it quotes. **Opposite**: soft when you are loud. **Fixed**: always Fixed velocity. |
+| **Velocity amount** | 0 %: every note at your current level. 100 %: like you. 200 %: exaggerated. |
+| **Loudness range** (audio) | Auto (default): it learns the range of your attacks, whatever your mic gain. Off: your softest and loudest attacks in dB (two handles; an orange mark shows your last attack). |
 | **Held notes** | The chance that, while you are still holding your note, its answer note is held too and released with yours (8 s at most). At 100 % in reflex mode, every note you hold, it holds. |
 | **Bends** / **Bend range** | Follows your bends, slides and vibrato (audio) or your pitch wheel (MIDI) with pitch bend on its sounding notes. Set Bend range to your synth's pitch bend range (±2 by default on most synths). |
 | **Lowest note / Highest note** | Range of the answers (folded by octaves). |
@@ -97,6 +102,8 @@ Some starting points:
 - **It cuts in**: Patience 50 %, Interruption 70 %.
 - **Quotes only**: Fidelity 100 %, Contrast 0 %, Scale lock 100 %, Randomness 0 %.
 - **Improv partner**: Patience 50 %, Interruption 30 %, Randomness 35 %, Humanize 50 %, Scale lock 80 %.
+- **Groove** (character 7): plays along on your pulse, a bar behind. With Contrast up, it plays in your gaps.
+- **Trading** (character 8): you play a bar or two, it answers them on your pulse with your rhythm.
 - **Birds**: Bright listening, Highest note at maximum (answers are folded by octaves into the range), Scale lock 0 %, Threshold just above the wind.
 
 ## Routing in Reaper
@@ -108,7 +115,7 @@ Some starting points:
 
 **With MIDI**: set Source to MIDI. Track 1 receives your keyboard (armed, monitoring on) or holds a MIDI item. The send to track 2 stays the same. With MIDI thru, a single synth track can play both your keyboard and the answers; put the answers on another output channel if you want to keep them apart.
 
-In MIDI, notes played together (within 30 ms) count as one melodic event, the top note. All notes are used to recognise the chord. If its answers come back to it (MIDI loop), it recognises and ignores them: a note on its output channel and pitch arriving less than 100 ms after it played that note is taken as an echo. Separate channels are still better. The pitch wheel of your keyboard is heard too (assumed ±2 semitones), for Bends.
+In MIDI, notes played together (within 30 ms) count as one melodic event, the top note. All notes are used to recognise the chord. If its answers come back to it (MIDI loop), it recognises and ignores them: a note on its output channel and pitch arriving less than 100 ms after it played that note is taken as an echo. So keep your keyboard and its answers on separate channels (it answers on channel 2 by default), especially when it plays along with you in unison. The pitch wheel of your keyboard is heard too (assumed ±2 semitones), for Bends.
 
 In **Ableton Live**, a VST can't send MIDI to another track. Run the **Standalone** app instead, with its MIDI output going to a virtual bus (IAC on Mac, loopMIDI on Windows), which Live receives like a keyboard. A Max for Live device is an idea for later.
 
@@ -126,7 +133,7 @@ Watch out for musical feedback: if the answering synth can be heard in the mic, 
 conversations_cli phrase.wav answers.mid --render preview.wav --patience 0.6 --interruption 0 --contrast 0.3
 ```
 
-Options: `--patience --interruption --length --memory --fidelity --contrast --scale --low --high --sensitivity --gate --seed --bright 1 --random --humanize --lowcut --highcut --dynamics --sustain --bend --bendrange`. Pitch bend is written to the MIDI file. The tool also prints the detected scale and the last chord.
+Options: `--patience --interruption --length --memory --fidelity --contrast --scale --low --high --sensitivity --gate --seed --bright 1 --random --humanize --lowcut --highcut --velmode --velamount --scalemode --scaleroot --scaletype --groove --sustain --bend --bendrange`. Pitch bend is written to the MIDI file. The tool also prints the detected scale and the last chord.
 
 ## Build
 
@@ -159,7 +166,10 @@ Fonts: Atkinson Hyperlegible and Space Mono (SIL Open Font License, `assets/font
 - Reflex mode: answer at most 21 ms after the note it heard (35 ± 13 ms with Humanize at 100 %). On a plucked phrase (notes ringing into each other), every note answered within 33 ms with "Does it cut in?" at 50 % or 80 %.
 - Same note re-plucked while it still rings, at the same loudness: 8 attacks heard out of 8.
 - A phrase ending on a note held 4 s: answered 1.2 s after its attack instead of after the note dies away.
-- Expression: soft/loud playing gives answers from velocity 46 to 112 (all at 89 with Dynamics at 0). A held note of 1.5 s gets an answer held 1.51 s. A bend of +0.6 semitone is followed to +0.56; a MIDI pitch wheel to +1 semitone to +0.99.
+- Velocity, soft and loud notes in turn: every answer follows your accent (9/9 audio, 7/7 MIDI), from velocity 20 to 127 (audio) and 31 to 110 (MIDI); Opposite inverts all of them; Fixed gives 100 every time.
+- Rhythm: a one-bar pattern at 100 BPM in 8ths → pulse 100 BPM, 2 per beat. Its answer repeats your pattern with every note within 12 ms of your grid; playing along, a bar behind, all notes on the grid and none after you stop; with Contrast, none at the same time as yours. Drum hits (noise bursts) → answers on 2 notes, on the grid.
+- Scale: playing in C major, Fixed Eb major / Custom C-E-G keep every note in those; Free with randomness uses all 12 notes. MIDI legato and chords: every note closes on the timeline.
+- Expression: A held note of 1.5 s gets an answer held 1.51 s. A bend of +0.6 semitone is followed to +0.56; a MIDI pitch wheel to +1 semitone to +0.99.
 - Bright: whistles from 2.5 to 9 kHz accurate to ±0.2 semitone, note confirmed in ~7 ms. A 14-note trill of 30 ms notes fully heard (Instrument mode hears only 9). A 2 → 4 kHz glide followed as 7 rising notes.
 - MIDI: reflex answer in the same block as the incoming note (0 ms). Held C-E-G-Bb recognised as C7. MIDI loop without self-dialogue. Channel filter, audio + MIDI mix, waits for keys to be released in listening mode. MIDI thru checked in a VST3 host.
 - Strummed chords recognised: C, Am, G7, Fmaj7, plus a C → G change. Am7 arpeggio recognised. Scales recognised: D dorian, A harmonic minor, minor pentatonic.
@@ -171,6 +181,7 @@ Fonts: Atkinson Hyperlegible and Space Mono (SIL Open Font License, `assets/font
 - Tuning reference A = 440 Hz; a badly detuned instrument confuses harmony detection.
 - The memory is not saved with the project (only the settings are).
 - Bends are measured from where your note started: a slide wide enough to be heard as a new note starts a new answer instead of bending the old one.
+- The pulse needs a few bars of clear rhythm (about 6 attacks). Bars are assumed to be 4 beats (2 when the beat is slower than 75 BPM) for playing along; odd meters are followed beat by beat, not by bar.
 - Ideas: polyphonic answers (chords), glides of its own between its notes, a MIDI corpus loaded in advance ("learn" a style), timbre → CC (brightness, noisiness) to modulate the synth, a Max for Live device, a Schwung module for the Move.
 
 ## License

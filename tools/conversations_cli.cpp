@@ -258,7 +258,12 @@ int main(int argc, char** argv) {
         else if (k == "--humanize") p.humanize = (float)v;
         else if (k == "--lowcut") p.lowCutHz = (float)v;
         else if (k == "--highcut") p.highCutHz = (float)v;
-        else if (k == "--dynamics") p.dynamics = (float)v;
+        else if (k == "--velmode") p.velMode = (int)v;
+        else if (k == "--velamount") p.velAmount = (float)v;
+        else if (k == "--scalemode") p.scaleMode = (int)v;
+        else if (k == "--scaleroot") p.scaleRoot = (int)v;
+        else if (k == "--scaletype") p.scaleType = (int)v;
+        else if (k == "--groove") p.groove = (float)v;
         else if (k == "--sustain") p.sustain = (float)v;
         else if (k == "--bend") p.bend = (float)v;
         else if (k == "--bendrange") p.bendRange = (int)v;

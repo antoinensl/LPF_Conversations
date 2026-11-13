@@ -40,6 +40,7 @@ struct Preset {
     const char* name;
     const char* desc;
     float patience, interruption, contrast, random, length01, humanize;   // 0..1 (length01 -> 0.25..2)
+    float groove;
 };
 const std::vector<Preset>& presets();
 inline float lengthFrom01(float v) { return 0.25f + 1.75f * v; }

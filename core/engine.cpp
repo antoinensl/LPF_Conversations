@@ -8,6 +8,7 @@ namespace lpfd {
 void Engine::prepare(double sampleRate) {
     sr_ = sampleRate;
     analyzer_.prepare(sampleRate);
+    pulse_.prepare(sampleRate);
     reset();
 }
 
@@ -34,6 +35,11 @@ void Engine::reset() {
     lastAttack_ = -1000000;
     velLo_ = velHi_ = -1.f;
     midiBendSemis_ = 0.f; bendSmooth_ = 0.f; lastBendOut_ = 8192;
+    lastAttackDb_ = -120.f;
+    pulse_.reset();
+    onsets_.clear();
+    lastPlayAlongBeat_ = -1000000000;
+    playAlongShown_ = false;
 }
 
 void Engine::setParams(const Params& p) {
@@ -53,7 +59,16 @@ void Engine::setParams(const Params& p) {
     p_.humanize = std::clamp(p_.humanize, 0.f, 1.f);
     p_.source = std::clamp(p_.source, 0, 2);
     p_.midiInChannel = std::clamp(p_.midiInChannel, 0, 16);
-    p_.dynamics = std::clamp(p_.dynamics, 0.f, 1.f);
+    p_.velMode = std::clamp(p_.velMode, 0, 3);
+    p_.velAmount = std::clamp(p_.velAmount, 0.f, 2.f);
+    p_.velFixed = std::clamp(p_.velFixed, 1, 127);
+    p_.velLowDb = std::clamp(p_.velLowDb, -70.f, -3.f);
+    p_.velHighDb = std::clamp(p_.velHighDb, p_.velLowDb + 3.f, 0.f);
+    p_.scaleMode = std::clamp(p_.scaleMode, 0, 3);
+    p_.scaleRoot = ((p_.scaleRoot % 12) + 12) % 12;
+    p_.scaleType = std::clamp(p_.scaleType, 0, Harmony::NumScales - 1);
+    p_.scaleCustom &= 0xFFF;
+    p_.groove = std::clamp(p_.groove, 0.f, 1.f);
     p_.sustain = std::clamp(p_.sustain, 0.f, 1.f);
     p_.bend = std::clamp(p_.bend, 0.f, 1.f);
     p_.bendRange = std::clamp(p_.bendRange, 1, 96);
@@ -253,6 +268,40 @@ void Engine::updateHarmony() {
     }
 }
 
+uint16_t Engine::answerScaleMask() const {
+    switch (p_.scaleMode) {
+        case 1: return 0;                                                       // free
+        case 2: return rotateMask(kScaleMasks[p_.scaleType], p_.scaleRoot);     // fixed
+        case 3: return (uint16_t)(p_.scaleCustom ? p_.scaleCustom : 0xFFF);     // custom
+        default: return harmony_.scaleMask;                                     // what it heard
+    }
+}
+
+float Engine::playerMeanVel() const {
+    if (recent_.empty()) return 0.6f;
+    float s = 0.f;
+    for (int64_t i = recent_.first(); i < recent_.count(); ++i) s += recent_.at(i).velocity;
+    return s / (float)recent_.size();
+}
+
+// velocity of an answer note, 0..1. `imitated`: the note it is quoting; `followed`: yours at the
+// same place in your last notes; `mean`: your current level; `accent`: added on strong beats.
+float Engine::answerVel(float imitated, float followed, float mean, float accent) {
+    float v;
+    switch (p_.velMode) {
+        case 1: v = imitated; break;
+        case 2: v = 1.05f - followed; break;
+        case 3: v = p_.velFixed / 127.f; break;
+        default: v = followed; break;
+    }
+    if (p_.velMode != 3) {
+        const float c = p_.velMode == 2 ? 1.05f - mean : mean;
+        v = c + (v - c) * p_.velAmount + accent;
+    }
+    v += p_.humanize * 0.06f * rndSigned();
+    return std::clamp(v, 0.02f, 1.f);
+}
+
 int Engine::snapToMask(int p, uint16_t mask, int dir) {
     if (!mask) return p;
     const int s = dir >= 0 ? 1 : -1;
@@ -266,7 +315,8 @@ int Engine::snapToMask(int p, uint16_t mask, int dir) {
 
 // An invented note near `prev`: a chord tone (leap) or a scale step.
 int Engine::randomTone(int prev, bool chordTone) {
-    const uint16_t mask = chordTone && harmony_.chordMask ? harmony_.chordMask : harmony_.scaleMask;
+    const uint16_t sm = p_.scaleMode == 1 ? (uint16_t)0xFFF : answerScaleMask();
+    const uint16_t mask = chordTone && harmony_.chordMask && p_.scaleMode == 0 ? harmony_.chordMask : sm;
     if (!mask) return prev;
     int cand[16];
     int nc = 0;
@@ -288,7 +338,8 @@ int Engine::generate(int n, GenNote* out, int cap) {
     const int64_t cnt = memory_.count();
     const int64_t window = (int64_t)std::lround(8.0 * std::pow(2.0, p_.memory * 9.0));
     const int64_t base = std::max(memory_.first(), cnt - window);
-    const uint16_t scaleMask = harmony_.scaleMask;
+    const uint16_t scaleMask = answerScaleMask();
+    const bool inventOk = scaleMask != 0 || p_.scaleMode == 1;   // free: invents chromatically
     const float r = p_.randomness, h = p_.humanize;
 
     // context = what was just played
@@ -311,10 +362,7 @@ int Engine::generate(int n, GenNote* out, int cap) {
         prev = (int)std::lround(meanPitch);
     }
     meanIoi = nIoi ? meanIoi / nIoi : 0.3f;
-    // how loud you are playing right now (the last notes count most)
-    float nowVel = -1.f;
-    for (int64_t s = recent_.first(); s < recent_.count(); ++s)
-        nowVel = nowVel < 0.f ? recent_.at(s).velocity : 0.6f * nowVel + 0.4f * recent_.at(s).velocity;
+    const float meanVel = playerMeanVel();
 
     const float c = p_.contrast;
     const float center = 0.5f * (p_.rangeLow + p_.rangeHigh);
@@ -364,11 +412,11 @@ int Engine::generate(int n, GenNote* out, int cap) {
         // pitch: learnt, then maybe invented, then maybe pulled into the scale
         int pitch = foldToRange(prev + interval);
         const bool edge = i == 0 || i == n - 1;
-        if (scaleMask && rnd() < r * 0.5f)
+        if (inventOk && rnd() < r * 0.5f)
             pitch = foldToRange(randomTone(prev, edge || rnd() < 0.4f));
         if (scaleMask && rnd() < p_.scaleLock)
             pitch = foldToRange(snapToMask(pitch, scaleMask, interval));
-        if (edge && harmony_.chordMask && rnd() < r * 0.6f)       // land on a chord tone
+        if (edge && harmony_.chordMask && p_.scaleMode == 0 && rnd() < r * 0.6f)   // land on a chord tone
             pitch = foldToRange(snapToMask(pitch, harmony_.chordMask, interval));
 
         // a breath: skip a note now and then (keeps its time slot)
@@ -380,13 +428,14 @@ int Engine::generate(int n, GenNote* out, int cap) {
         if (i == n - 1) dur *= 1.f + 0.8f * h;                     // let the last note ring
         dur = std::clamp(dur, 0.03f, 4.f);
 
-        float vel = nowVel >= 0.f ? 0.5f * (e.velocity + nowVel) : e.velocity;
-        vel = vel + ((1.05f - vel) - vel) * c * 0.7f;
-        vel = 0.7f + (vel - 0.7f) * p_.dynamics;                   // 0 = even, 1 = like you
-        const float arc = std::sin(3.14159265f * (i + 0.5f) / n);  // phrase shape
-        vel *= 1.f + h * 0.3f * (arc - 0.5f);
-        vel += h * 0.12f * rndSigned();
-        const int midiVel = std::clamp((int)std::lround(1.f + std::clamp(vel, 0.f, 1.f) * 126.f), 1, 127);
+        // your last notes, in order: answer note i takes the accent of your note at the same place
+        float followed = meanVel;
+        if (!recent_.empty()) {
+            const int64_t idx = std::clamp<int64_t>(recent_.count() - n + i, recent_.first(), recent_.count() - 1);
+            followed = recent_.at(idx).velocity;
+        }
+        const float vel = answerVel(e.velocity, followed, meanVel, 0.f);
+        const int midiVel = std::clamp((int)std::lround(1.f + vel * 126.f), 1, 127);
 
         float when = t;
         if (i > 0) when = std::max(0.f, t + h * 0.025f * 0.5f * (rndSigned() + rndSigned()));
@@ -444,16 +493,224 @@ void Engine::schedule(int64_t t, uint32_t id, int pitch, int vel, bool on, bool 
     }
 }
 
+// ---------------------------------------------------------------- rhythm
+// An answer on the pulse of your playing: your last beats (as many as you played, times Length)
+// are taken slot by slot from the grid of your pulse, varied a little (less with more Groove and
+// Fidelity), or turned into their complement (Contrast: it plays in your gaps), then played from
+// the next beat. Pitches: yours (Fidelity) or its own phrase over your rhythm.
+int Engine::generateGroove(int64_t t, int heard, GenNote* out, int cap) {
+    if (onsets_.empty()) return generate(std::max(1, heard), out, cap);
+    const double P = pulse_.period(), sl = pulse_.slot();
+    const int div = pulse_.division();
+    const float g = p_.groove, fid = p_.fidelity, h = p_.humanize;
+    const int64_t last = onsets_.last().time;
+    const int64_t i0 = std::max(onsets_.first(), onsets_.count() - std::max(heard, 1));
+    const double phraseBeats = (double)(last - onsets_.at(i0).time) / P + 1.0;
+    const int L = std::clamp((int)std::lround(phraseBeats * p_.length), 1, std::max(1, 32 / div));
+    const int nSlots = L * div;
+    const int64_t we = pulse_.nextBeat(last + (int64_t)(0.35 * sl));
+    const int64_t ws = we - (int64_t)std::llround(L * P);
+
+    int64_t src[32];
+    bool fill[32] = {};
+    double dev[32] = {};
+    for (int i = 0; i < 32; ++i) src[i] = -1;
+    int occ = 0;
+    for (int64_t i = onsets_.count() - 1; i >= onsets_.first(); --i) {
+        const MemEvent& o = onsets_.at(i);
+        if ((double)o.time < (double)ws - sl * 0.5) break;
+        if ((double)o.time >= (double)we - sl * 0.5) continue;
+        const int64_t idx = pulse_.slotIndex(ws, o.time);
+        if (idx < 0 || idx >= nSlots) continue;
+        if (src[idx] < 0) ++occ;
+        src[idx] = i;                             // going back: the earliest attack in a slot wins
+        dev[idx] = (double)(o.time - pulse_.slotTime(ws, idx));
+    }
+    if (!occ) return generate(std::max(1, heard), out, cap);
+
+    const float var = ((1.f - fid) * 0.4f + p_.randomness * 0.4f) * (1.f - 0.6f * g);
+    if (rnd() < p_.contrast * 0.8f) {
+        // it plays in your gaps, about as many notes as you played
+        int freeIdx[32], nf = 0;
+        for (int i = 0; i < nSlots; ++i) if (src[i] < 0) freeIdx[nf++] = i;
+        int want = std::min(occ, nf);
+        int64_t nearest = -1;
+        for (int i = 0; i < nSlots; ++i) if (src[i] >= 0) { nearest = src[i]; break; }
+        for (int i = 0; i < nSlots; ++i) src[i] = -1;
+        while (want > 0 && nf > 0) {
+            float tot = 0.f;
+            for (int j = 0; j < nf; ++j) tot += freeIdx[j] % div ? 2.f : 1.f;   // offbeats first
+            float r = rnd() * tot;
+            int pick = nf - 1;
+            for (int j = 0; j < nf; ++j) { r -= freeIdx[j] % div ? 2.f : 1.f; if (r <= 0.f) { pick = j; break; } }
+            src[freeIdx[pick]] = nearest; fill[freeIdx[pick]] = true; dev[freeIdx[pick]] = 0.0;
+            freeIdx[pick] = freeIdx[--nf];
+            --want;
+        }
+    } else if (var > 0.f) {
+        bool firstSeen = false;
+        for (int i = 0; i < nSlots; ++i) {
+            if (src[i] < 0) continue;
+            if (!firstSeen) { firstSeen = true; continue; }        // the first note stays
+            const float r = rnd();
+            if (r < var * 0.25f) src[i] = -1;
+            else if (r < var * 0.5f) {
+                const int j = i + (rnd() < 0.5f ? -1 : 1);
+                if (j > 0 && j < nSlots && src[j] < 0) { src[j] = src[i]; dev[j] = 0.0; src[i] = -1; if (j > i) ++i; }
+            }
+        }
+        int64_t prevSrc = -1;
+        const int step = std::max(1, div / 2);
+        for (int i = 0; i < nSlots; ++i) {
+            if (src[i] >= 0) { prevSrc = src[i]; continue; }
+            if (prevSrc >= 0 && i % step == 0 && rnd() < var * 0.12f) { src[i] = prevSrc; fill[i] = true; }
+        }
+    }
+
+    int idxs[32], kN = 0;
+    for (int i = 0; i < nSlots && kN < cap; ++i) if (src[i] >= 0) idxs[kN++] = i;
+    if (!kN) return 0;
+    GenNote mel[kMaxAnswer];
+    const int km = generate(kN, mel, kMaxAnswer);
+    int pitched = 0;
+    for (int j = 0; j < kN; ++j) if (onsets_.at(src[idxs[j]]).pitched) ++pitched;
+    const bool drums = pitched * 10 < kN * 4;              // mostly sounds without pitch
+    const uint16_t mask = answerScaleMask();
+    const float meanV = playerMeanVel();
+    const int base = km ? mel[0].pitch : foldToRange(60);
+    const int64_t st = pulse_.nextBeat(t + (int64_t)(0.02 * sr_));
+
+    int k = 0;
+    for (int j = 0; j < kN; ++j) {
+        const int i = idxs[j];
+        const MemEvent& o = onsets_.at(src[i]);
+        int pitch;
+        if (drums)
+            pitch = o.velocity >= meanV ? base : foldToRange(mask ? snapToMask(base + 7, mask, 1) : base + 7);
+        else if (!fill[i] && o.pitched && rnd() < fid) {
+            pitch = (int)std::lround(o.pitch);
+            if (mask && rnd() < p_.scaleLock) pitch = snapToMask(pitch, mask, 1);
+            pitch = foldToRange(pitch);
+        } else
+            pitch = km ? mel[j % km].pitch : base;
+        int64_t on = pulse_.slotTime(st, i) + (int64_t)(dev[i] * (1.0 - g)) + (int64_t)(h * 0.012 * rndSigned() * sr_);
+        on = std::max(on, t);
+        double dur = fill[i] || o.dur <= 0.f ? 0.8 * sl / sr_ : (double)o.dur;
+        if (j + 1 < kN) dur = std::min(dur, 0.95 * (double)(pulse_.slotTime(st, idxs[j + 1]) - pulse_.slotTime(st, i)) / sr_);
+        const float accent = i % div == 0 ? 0.06f * g : 0.f;
+        const float v = answerVel(fill[i] ? meanV * 0.9f : o.velocity, fill[i] ? meanV * 0.9f : o.velocity, meanV, accent);
+        out[k].time = (float)((double)(on - t) / sr_);
+        out[k].dur = (float)std::clamp(dur, 0.03, 4.0);
+        out[k].pitch = std::clamp(pitch, 0, 127);
+        out[k].velocity = std::clamp((int)std::lround(1.f + v * 126.f), 1, 127);
+        ++k;
+    }
+    return k;
+}
+
+// Playing along: on each beat it plays the beat you played a bar ago (two beats at slow tempos),
+// in unison with your rhythm or, with Contrast, in its gaps.
+void Engine::playAlongBeat(int64_t beat, int64_t now) {
+
+    const double P = pulse_.period(), sl = pulse_.slot();
+    const int div = pulse_.division();
+    const float g = p_.groove, fid = p_.fidelity;
+    const int C = P > 0.8 * sr_ ? 2 : 4;
+    const int64_t ss = beat - (int64_t)std::llround(C * P);
+    int64_t srcSeq[8];
+    bool has[8] = {};
+    double dev[8] = {};
+    int occ = 0;
+    for (int64_t i = onsets_.count() - 1; i >= onsets_.first(); --i) {
+        const MemEvent& o = onsets_.at(i);
+        if ((double)o.time < (double)ss - sl * 0.5) break;
+        if ((double)o.time >= (double)ss + P - sl * 0.5) continue;
+        const int64_t idx = pulse_.slotIndex(ss, o.time);
+        if (idx < 0 || idx >= div) continue;
+        if (!has[idx]) ++occ;
+        has[idx] = true; srcSeq[idx] = i;
+        dev[idx] = (double)(o.time - pulse_.slotTime(ss, idx));
+    }
+    // still playing? (nothing at all in the last bar: it stops with you)
+    if (onsets_.empty() || (double)(now - onsets_.last().time) > (C + 0.5) * P) { playAlongShown_ = false; return; }
+    bool fillMode = rnd() < p_.contrast;
+    bool play[8] = {};
+    bool fill[8] = {};
+    int anySrc = -1;
+    for (int i = 0; i < div; ++i) if (has[i]) { anySrc = i; break; }
+    if (anySrc < 0 && !fillMode) return;
+    if (anySrc < 0) {
+        // you rested on that beat (but played in that bar): it fills it
+        bool barPlayed = false;
+        for (int64_t i = onsets_.count() - 1; i >= onsets_.first() && !barPlayed; --i) {
+            const int64_t ot = onsets_.at(i).time;
+            if (ot < ss) break;
+            barPlayed = (double)ot < (double)ss + C * P;
+        }
+        if (!barPlayed) return;
+        play[0] = true; fill[0] = true;
+    } else if (fillMode) {
+        // in your gaps only (a beat you fill completely, it leaves to you)
+        for (int i = 0; i < div; ++i) if (!has[i]) { play[i] = true; fill[i] = true; }
+    } else {
+        for (int i = 0; i < div; ++i) play[i] = has[i];
+    }
+    int idxs[8], kN = 0;
+    for (int i = 0; i < div; ++i) if (play[i]) idxs[kN++] = i;
+    if (!kN) return;
+    GenNote mel[kMaxAnswer];
+    const int km = generate(kN, mel, kMaxAnswer);
+    const uint16_t mask = answerScaleMask();
+    const float meanV = playerMeanVel();
+    const MemEvent& lastO = onsets_.last();
+    int freeSlots = 0;
+    for (auto& s : pool_) if (!s.used) ++freeSlots;
+    for (int j = 0; j < kN && freeSlots >= 2; ++j, freeSlots -= 2) {
+        const int i = idxs[j];
+        const MemEvent& o = has[i] ? onsets_.at(srcSeq[i]) : lastO;
+        int pitch;
+        if (!o.pitched) pitch = o.velocity >= meanV ? (km ? mel[0].pitch : foldToRange(60)) : (km ? mel[j % km].pitch : foldToRange(67));
+        else if (!fill[i] && rnd() < fid) {
+            pitch = (int)std::lround(o.pitch);
+            if (mask && rnd() < p_.scaleLock) pitch = snapToMask(pitch, mask, 1);
+            pitch = foldToRange(pitch);
+        } else pitch = km ? mel[j % km].pitch : foldToRange((int)std::lround(o.pitch));
+        int64_t on = pulse_.slotTime(beat, i) + (fill[i] ? 0 : (int64_t)(dev[i] * (1.0 - g)));
+        on = std::max(on, now);
+        double dur = fill[i] || o.dur <= 0.f ? 0.8 * sl : (double)o.dur * sr_;
+        const int64_t nextT = j + 1 < kN ? pulse_.slotTime(beat, idxs[j + 1]) : beat + (int64_t)P;
+        dur = std::clamp(std::min(dur, 0.95 * (double)(nextT - on)), 0.03 * sr_, 4.0 * sr_);
+        const float v = answerVel(fill[i] ? meanV * 0.9f : o.velocity, fill[i] ? meanV * 0.9f : o.velocity, meanV,
+                                  i == 0 ? 0.06f * g : 0.f);
+        uint32_t id = nextId_++;
+        if (id == 0) id = nextId_++;
+        schedule(on, id, std::clamp(pitch, 0, 127), std::clamp((int)std::lround(1.f + v * 126.f), 1, 127), true);
+        schedule(on + (int64_t)dur, id, std::clamp(pitch, 0, 127), 0, false);
+        answerEnd_ = std::max(answerEnd_, on + (int64_t)dur);
+        answering_ = true;
+    }
+    if (!playAlongShown_) {
+        playAlongShown_ = true;
+        TimelineEvent ev;
+        ev.time = beat; ev.kind = TimelineEvent::Trigger; ev.reason = TimelineEvent::PlayAlong;
+        ev.info = (float)pulse_.bpm();
+        timeline_.push(ev);
+    }
+}
+
 void Engine::trigger(int64_t t, const Transport& tr, int64_t blockStart, int reason, float info) {
+    const int heard = newEvents_;
     float len = newEvents_ * p_.length;
     len *= 1.f + 0.5f * p_.randomness * rndSigned();
     const int n = std::clamp((int)std::lround(len), 1, kMaxAnswer);
     newEvents_ = 0;
     if (!p_.respond) return;
     // a human does not answer after exactly the same delay every time
-    t += (int64_t)(p_.humanize * rnd() * (0.05 + 0.25 * p_.patience) * sr_);
+    if (!grooveActive() || reason == TimelineEvent::Reflex) t += (int64_t)(p_.humanize * rnd() * (0.05 + 0.25 * p_.patience) * sr_);
     GenNote notes[kMaxAnswer];
-    const int k = generate(n, notes, kMaxAnswer);
+    // reflex answers stay immediate: only phrases are put on your pulse
+    const bool groove = grooveActive() && reason != TimelineEvent::Reflex;
+    const int k = groove ? generateGroove(t, heard, notes, kMaxAnswer) : generate(n, notes, kMaxAnswer);
     int freeSlots = 0;
     for (auto& s : pool_) if (!s.used) ++freeSlots;
     // you are still holding your note: its last note may be held as long as yours
@@ -461,7 +718,8 @@ void Engine::trigger(int64_t t, const Transport& tr, int64_t blockStart, int rea
     for (int i = 0; i < k && freeSlots >= 2; ++i, freeSlots -= 2) {
         uint32_t id = nextId_++;
         if (id == 0) id = nextId_++;
-        int64_t on = snapToGrid(t + (int64_t)(notes[i].time * sr_), tr, blockStart);
+        int64_t on = t + (int64_t)(notes[i].time * sr_);
+        if (!groove) on = snapToGrid(on, tr, blockStart);           // the host grid, when it is not your own
         int64_t off = on + std::max<int64_t>(1, (int64_t)(notes[i].dur * sr_));
         schedule(on, id, notes[i].pitch, notes[i].velocity, true);
         if (tie && i == k - 1) {
@@ -503,14 +761,19 @@ bool Engine::playerHolding() const {
     return (p_.source != 1 && analyzer_.isActive()) || (p_.source != 0 && heldCount_ > 0);
 }
 
+void Engine::timelinePush(int64_t t, uint8_t kind, int pitch, int vel) {
+    TimelineEvent ev;
+    ev.time = t;
+    ev.kind = kind;
+    ev.pitch = (uint8_t)std::clamp(pitch, 0, 127);
+    ev.vel = (uint8_t)std::clamp(vel, 0, 127);
+    timeline_.push(ev);
+}
+
 void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStart) {
-    {
-        TimelineEvent ev;
-        ev.time = e.time;
-        ev.kind = e.type == HeardEvent::End ? TimelineEvent::PlayerOff : TimelineEvent::PlayerOn;
-        ev.pitch = (uint8_t)std::clamp((int)std::lround(e.pitch), 0, 127);
-        timeline_.push(ev);
-    }
+    // MIDI notes go to the timeline one by one in onMidi (chords, legato)
+    if (!e.midi && e.type == HeardEvent::End)
+        timelinePush(e.time, TimelineEvent::PlayerOff, (int)std::lround(e.pitch), 0);
     if (e.type == HeardEvent::End) {
         releaseTied(e.time);
         auto close = [&](auto& ring) {
@@ -519,6 +782,7 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
         };
         if (lastStartTime_ >= 0) {
             close(recent_);
+            close(onsets_);
             if (!p_.freeze) close(memory_);
         }
         return;
@@ -531,13 +795,19 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
     m.pitched = e.pitched;
     m.velocity = e.velocity;
     if (!e.midi) {
-        // spread your own range of attacks (which depends on mic, gain, instrument) over 0.2..1
         const float v = e.velocity;
-        if (velLo_ < 0.f) velLo_ = velHi_ = v;
-        velHi_ = std::max(v, velHi_ - 0.01f);
-        velLo_ = std::min(v, velLo_ + 0.01f);
-        const float span = velHi_ - velLo_;
-        m.velocity = span > 0.08f ? 0.2f + 0.8f * (v - velLo_) / span : 0.6f;
+        lastAttackDb_ = v * 60.f - 60.f;                         // the analyser maps -60..0 dB to 0..1
+        if (p_.velAuto) {
+            // spread your own range of attacks (mic, gain, instrument) over 0.15..1
+            if (velLo_ < 0.f) velLo_ = velHi_ = v;
+            velHi_ = std::max(v, velHi_ - 0.005f);
+            velLo_ = std::min(v, velLo_ + 0.005f);
+            const float span = velHi_ - velLo_;
+            m.velocity = span > 0.06f ? 0.15f + 0.85f * (v - velLo_) / span : 0.6f;
+        } else {
+            m.velocity = std::clamp((lastAttackDb_ - p_.velLowDb) / (p_.velHighDb - p_.velLowDb), 0.f, 1.f) * 0.97f + 0.03f;
+        }
+        timelinePush(e.time, TimelineEvent::PlayerOn, (int)std::lround(e.pitch), (int)std::lround(m.velocity * 127.f));
     }
     m.ioi = lastStartTime_ < 0 ? 0.25f
                                : std::min(4.f, (float)((e.time - lastStartTime_) / sr_));
@@ -553,8 +823,14 @@ void Engine::onHeard(const HeardEvent& e, const Transport& tr, int64_t blockStar
     legato(recent_);
     recent_.add(m);
     if (!p_.freeze) { legato(memory_); memory_.add(m); }
+    legato(onsets_);
+    onsets_.add(m);
+    pulse_.addOnset(e.time, m.velocity);
     lastStartTime_ = e.time;
     ++newEvents_;
+
+    // playing along on your pulse: no turns to take
+    if (playingAlong()) { newEvents_ = 0; return; }
 
     if (answering_ && p_.interruption < 0.5f) yieldAt(e.commitTime);
 
@@ -589,10 +865,12 @@ void Engine::onMidi(const MidiIn& m, const Transport& tr, int64_t blockStart) {
         if (echoHeld_[p]) { echoHeld_[p] = false; return; }
         if (!held_[p]) return;
         held_[p] = false;
+        timelinePush(t, TimelineEvent::PlayerOff, p, 0);
         if (--heldCount_ <= 0) { heldCount_ = 0; midiLastActive_ = t; }
         if (p == lastMidiEventPitch_) {
             HeardEvent e;
             e.type = HeardEvent::End; e.time = t; e.commitTime = t; e.pitch = (float)p; e.pitched = true;
+            e.midi = true;
             onHeard(e, tr, blockStart);
             lastMidiEventPitch_ = -1;
         }
@@ -607,6 +885,7 @@ void Engine::onMidi(const MidiIn& m, const Transport& tr, int64_t blockStart) {
     }
     if (held_[p]) return;                       // repeated note-on without note-off
     held_[p] = true;
+    timelinePush(t, TimelineEvent::PlayerOn, p, m.vel);
     heldVel_[p] = m.vel / 127.f;
     ++heldCount_;
     midiLastActive_ = t;
@@ -670,7 +949,7 @@ void Engine::emit(int64_t blockStart, int n, MidiSink& out) {
             lastEmitOn_[s.pitch] = blockStart + off;
             ++notesSent_;
             TimelineEvent ev;
-            ev.time = blockStart + off; ev.kind = TimelineEvent::AnswerOn; ev.pitch = s.pitch;
+            ev.time = blockStart + off; ev.kind = TimelineEvent::AnswerOn; ev.pitch = s.pitch; ev.vel = s.vel;
             timeline_.push(ev);
         } else if (soundId_[s.pitch] == s.id) {
             out.noteOff(off, ch, s.pitch);
@@ -791,6 +1070,18 @@ void Engine::process(const float* in, int n, const Transport& tr, MidiSink& out)
         const int64_t tHeld = lastAttack_ + (int64_t)(wait * sr_);
         if (tHeld < blockStart + n)
             trigger(std::max(tHeld, blockStart), tr, blockStart, TimelineEvent::Held, (float)wait);
+    }
+    // rhythm: your pulse, and playing along on it
+    pulse_.update(blockStart + n);
+    if (p_.respond && playingAlong()) {
+        const int64_t end = blockStart + n;
+        const int64_t nb = pulse_.nextBeat(end);
+        if ((double)(nb - end) < 0.12 * sr_ && (double)std::llabs(nb - lastPlayAlongBeat_) > 0.5 * pulse_.period()) {
+            lastPlayAlongBeat_ = nb;
+            playAlongBeat(nb, end);
+        }
+    } else {
+        playAlongShown_ = false;
     }
     {
         const float kk = std::exp(-(float)n / (float)(20.0 * sr_));

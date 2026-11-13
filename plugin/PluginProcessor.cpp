@@ -62,7 +62,34 @@ juce::AudioProcessorValueTreeState::ParameterLayout DialogueProcessor::createLay
             AudioParameterFloatAttributes().withStringFromValueFunction(
                 [](float v, int) { return String(juce::roundToInt(v * 100.f)) + " %"; }));
     };
-    p.push_back(pct2("dynamics", u8("Dynamics"), 0.7f));
+    p.push_back(std::make_unique<AudioParameterChoice>(
+        ParameterID{"velmode", 3}, u8("Velocity"),
+        StringArray{u8("Follows you"), u8("Imitates the phrase"), u8("Opposite"), u8("Fixed")}, 0));
+    p.push_back(std::make_unique<AudioParameterFloat>(
+        ParameterID{"velamount", 3}, u8("Velocity amount"), NormalisableRange<float>(0.f, 2.f), 1.f,
+        AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float v, int) { return String(juce::roundToInt(v * 100.f)) + " %"; })));
+    p.push_back(std::make_unique<AudioParameterInt>(ParameterID{"velfixed", 3}, u8("Fixed velocity"), 1, 127, 100));
+    p.push_back(std::make_unique<AudioParameterBool>(ParameterID{"velauto", 3}, u8("Loudness range auto"), true));
+    auto db = [](const String& id, const String& name, float lo, float hi, float def) {
+        return std::make_unique<AudioParameterFloat>(
+            ParameterID{id, 3}, name, NormalisableRange<float>(lo, hi), def,
+            AudioParameterFloatAttributes().withStringFromValueFunction(
+                [](float v, int) { return String(juce::roundToInt(v)) + " dB"; }));
+    };
+    p.push_back(db("vellow", u8("Softest attack"), -66.f, -10.f, -40.f));
+    p.push_back(db("velhigh", u8("Loudest attack"), -50.f, 0.f, -6.f));
+    p.push_back(std::make_unique<AudioParameterChoice>(
+        ParameterID{"scalemode", 3}, u8("Scale"), StringArray{u8("Auto"), u8("Free"), u8("Fixed"), u8("Custom")}, 0));
+    {
+        StringArray roots, types;
+        for (int i = 0; i < 12; ++i) roots.add(lpfd::Harmony::pcName(i));
+        for (int i = 0; i < lpfd::Harmony::NumScales; ++i) types.add(lpfd::Harmony::scaleName(i));
+        p.push_back(std::make_unique<AudioParameterChoice>(ParameterID{"scaleroot", 3}, u8("Scale root"), roots, 0));
+        p.push_back(std::make_unique<AudioParameterChoice>(ParameterID{"scaletype", 3}, u8("Scale type"), types, 0));
+    }
+    p.push_back(std::make_unique<AudioParameterInt>(ParameterID{"scalecustom", 3}, u8("Custom scale"), 1, 4095, 0xAB5));
+    p.push_back(pct2("groove", u8("Groove"), 0.6f));
     p.push_back(pct2("sustain", u8("Held notes"), 0.5f));
     p.push_back(pct2("bend", u8("Bends"), 0.f));
     p.push_back(std::make_unique<AudioParameterChoice>(
@@ -98,7 +125,11 @@ DialogueProcessor::DialogueProcessor()
     pThru = apvts.getRawParameterValue("thru");
     pLowCut = apvts.getRawParameterValue("lowcut");
     pHighCut = apvts.getRawParameterValue("highcut");
-    pDynamics = apvts.getRawParameterValue("dynamics");
+    for (auto& [ptr, id] : std::initializer_list<std::pair<std::atomic<float>**, const char*>>{
+             {&pVelMode, "velmode"}, {&pVelAmount, "velamount"}, {&pVelFixed, "velfixed"}, {&pVelAuto, "velauto"},
+             {&pVelLow, "vellow"}, {&pVelHigh, "velhigh"}, {&pScaleMode, "scalemode"}, {&pScaleRoot, "scaleroot"},
+             {&pScaleType, "scaletype"}, {&pScaleCustom, "scalecustom"}, {&pGroove, "groove"}})
+        *ptr = apvts.getRawParameterValue(id);
     pSustain = apvts.getRawParameterValue("sustain");
     pBend = apvts.getRawParameterValue("bend");
     pBendRange = apvts.getRawParameterValue("bendrange");
@@ -143,7 +174,17 @@ lpfd::Params DialogueProcessor::readParams() const {
     p.midiInChannel = juce::roundToInt(pMidiIn->load());
     p.lowCutHz = pLowCut->load();
     p.highCutHz = pHighCut->load();
-    p.dynamics = pDynamics->load();
+    p.velMode = juce::roundToInt(pVelMode->load());
+    p.velAmount = pVelAmount->load();
+    p.velFixed = juce::roundToInt(pVelFixed->load());
+    p.velAuto = pVelAuto->load() > 0.5f;
+    p.velLowDb = pVelLow->load();
+    p.velHighDb = pVelHigh->load();
+    p.scaleMode = juce::roundToInt(pScaleMode->load());
+    p.scaleRoot = juce::roundToInt(pScaleRoot->load());
+    p.scaleType = juce::roundToInt(pScaleType->load());
+    p.scaleCustom = juce::roundToInt(pScaleCustom->load());
+    p.groove = pGroove->load();
     p.sustain = pSustain->load();
     p.bend = pBend->load();
     static const int ranges[] = {2, 12, 24, 48};
@@ -271,6 +312,11 @@ void DialogueProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         uiChordRoot.store(h.chordRoot); uiChord.store(h.chord);
     }
     uiPitch.store(engine.analyzer().lastConfidence() > 0.8f ? engine.analyzer().lastPitch() : 0.f);
+    uiPulseBpm.store(engine.pulse().valid() ? (float)engine.pulse().bpm() : 0.f);
+    uiPulseDiv.store(engine.pulse().division());
+    uiPlayingAlong.store(engine.playingAlong());
+    uiAttackDb.store(engine.lastAttackDb());
+    uiAnswerScale.store((int)engine.answerScaleMask());
 }
 
 void DialogueProcessor::processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer& midi) {

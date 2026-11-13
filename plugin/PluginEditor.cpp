@@ -103,16 +103,30 @@ static juce::String hzText(double v) {
     return v >= 1000.0 ? juce::String(v / 1000.0, v >= 10000.0 ? 0 : 1) + " kHz" : juce::String(juce::roundToInt(v)) + " Hz";
 }
 
-struct FreqRange : juce::Component, private juce::Timer {
-    static constexpr double fMin = 30.0, fMax = 12000.0;
+// A two-handle range on one axis (log Hz, or linear dB). Each handle is a real (invisible)
+// slider: Tab reaches it, arrows move it, a screen reader reads it; the mouse is handled here.
+struct RangeSlider : juce::Component, private juce::Timer {
+    struct Config {
+        const char* lowId; const char* highId;
+        juce::String title, lowTitle, lowDesc, highTitle, highDesc;
+        double vMin, vMax;
+        bool logScale;
+        double minRatioOrGap;                                   // log: high >= low * r; linear: high >= low + r
+        std::function<juce::String(double)> fmt;
+        std::vector<std::pair<double, juce::String>> ticks;
+        std::function<juce::String(double, double)> sentence;
+        std::function<float()> marker;                          // value to mark, or NaN
+    };
     DialogueProcessor& proc;
+    Config cfg;
     ui::Slider lo, hi;
     std::unique_ptr<SliderAtt> loAtt, hiAtt;
     ui::Slider* dragging = nullptr;
-    float marker = 0.f;
+    float marker = std::numeric_limits<float>::quiet_NaN();
+    bool dimmed = false;
 
-    explicit FreqRange(DialogueProcessor& p) : proc(p) {
-        setTitle(u8("Pitches it listens for"));
+    RangeSlider(DialogueProcessor& p, Config c) : proc(p), cfg(std::move(c)) {
+        setTitle(cfg.title);
         setFocusContainerType(FocusContainerType::focusContainer);
         auto setup = [this](ui::Slider& s, const char* id, const juce::String& title, const juce::String& desc) {
             addAndMakeVisible(s);
@@ -121,57 +135,66 @@ struct FreqRange : juce::Component, private juce::Timer {
             s.setTitle(title);
             s.setDescription(desc);
             if (auto* prm = proc.apvts.getParameter(id)) s.defaultValue = prm->convertFrom0to1(prm->getDefaultValue());
-            s.textFromValueFunction = [](double v) { return hzText(v); };
+            s.textFromValueFunction = [this](double v) { return cfg.fmt(v); };
             s.onValueChange = [this] { resized(); repaint(); };
         };
-        setup(lo, "lowcut", u8("Low cut"), u8("Lowest pitch it listens for. Below it, sounds are filtered out: rumble, wind, handling noise."));
-        setup(hi, "highcut", u8("High cut"), u8("Highest pitch it listens for."));
-        loAtt = std::make_unique<SliderAtt>(proc.apvts, "lowcut", lo);
-        hiAtt = std::make_unique<SliderAtt>(proc.apvts, "highcut", hi);
+        setup(lo, cfg.lowId, cfg.lowTitle, cfg.lowDesc);
+        setup(hi, cfg.highId, cfg.highTitle, cfg.highDesc);
+        loAtt = std::make_unique<SliderAtt>(proc.apvts, cfg.lowId, lo);
+        hiAtt = std::make_unique<SliderAtt>(proc.apvts, cfg.highId, hi);
         startTimerHz(15);
     }
 
     juce::Rectangle<int> track() const { return getLocalBounds().withTrimmedTop(26).withHeight(30).reduced(10, 0); }
-    float xOf(double hz) const {
-        const auto t = track();
-        return (float)t.getX() + (float)t.getWidth() * (float)(std::log(juce::jlimit(fMin, fMax, hz) / fMin) / std::log(fMax / fMin));
+    double unitOf(double v) const {
+        v = juce::jlimit(cfg.vMin, cfg.vMax, v);
+        return cfg.logScale ? std::log(v / cfg.vMin) / std::log(cfg.vMax / cfg.vMin) : (v - cfg.vMin) / (cfg.vMax - cfg.vMin);
     }
-    double hzOf(float x) const {
+    float xOf(double v) const { const auto t = track(); return (float)t.getX() + (float)t.getWidth() * (float)unitOf(v); }
+    double valueOf(float x) const {
         const auto t = track();
         const double u = juce::jlimit(0.0, 1.0, (double)(x - (float)t.getX()) / juce::jmax(1, t.getWidth()));
-        return fMin * std::pow(fMax / fMin, u);
+        return cfg.logScale ? cfg.vMin * std::pow(cfg.vMax / cfg.vMin, u) : cfg.vMin + u * (cfg.vMax - cfg.vMin);
     }
+    double limitLow(double v) const { return cfg.logScale ? juce::jmin(v, hi.getValue() / cfg.minRatioOrGap) : juce::jmin(v, hi.getValue() - cfg.minRatioOrGap); }
+    double limitHigh(double v) const { return cfg.logScale ? juce::jmax(v, lo.getValue() * cfg.minRatioOrGap) : juce::jmax(v, lo.getValue() + cfg.minRatioOrGap); }
     void resized() override {
         const auto t = track();
         lo.setBounds(juce::roundToInt(xOf(lo.getValue())) - 9, t.getY(), 18, t.getHeight());
         hi.setBounds(juce::roundToInt(xOf(hi.getValue())) - 9, t.getY(), 18, t.getHeight());
     }
     void timerCallback() override {
-        if (!isShowing()) return;
-        const float m = proc.uiHearing.load() ? proc.uiPitch.load() : 0.f;
-        if (std::abs(m - marker) > 0.05f) { marker = m; repaint(); }
+        if (!isShowing() || !cfg.marker) return;
+        const float m = cfg.marker();
+        if (std::isnan(m) != std::isnan(marker) || (!std::isnan(m) && std::abs(m - marker) > 0.05f)) { marker = m; repaint(); }
     }
     void mouseDown(const juce::MouseEvent& e) override {
+        if (dimmed) return;
         const float x = (float)e.x;
         dragging = std::abs(x - xOf(lo.getValue())) <= std::abs(x - xOf(hi.getValue())) ? &lo : &hi;
-        if (auto* prm = proc.apvts.getParameter(dragging == &lo ? "lowcut" : "highcut")) prm->beginChangeGesture();
+        if (auto* prm = proc.apvts.getParameter(dragging == &lo ? cfg.lowId : cfg.highId)) prm->beginChangeGesture();
         mouseDrag(e);
     }
     void mouseDrag(const juce::MouseEvent& e) override {
         if (!dragging) return;
-        double v = hzOf((float)e.x);
-        if (dragging == &lo) v = juce::jmin(v, hi.getValue() / 1.5);
-        else v = juce::jmax(v, lo.getValue() * 1.5);
-        dragging->setValue(v, juce::sendNotificationSync);
+        const double v = valueOf((float)e.x);
+        dragging->setValue(dragging == &lo ? limitLow(v) : limitHigh(v), juce::sendNotificationSync);
     }
     void mouseUp(const juce::MouseEvent&) override {
         if (dragging)
-            if (auto* prm = proc.apvts.getParameter(dragging == &lo ? "lowcut" : "highcut")) prm->endChangeGesture();
+            if (auto* prm = proc.apvts.getParameter(dragging == &lo ? cfg.lowId : cfg.highId)) prm->endChangeGesture();
         dragging = nullptr;
     }
     void mouseDoubleClick(const juce::MouseEvent& e) override {
+        if (dimmed) return;
         auto& s = std::abs((float)e.x - xOf(lo.getValue())) <= std::abs((float)e.x - xOf(hi.getValue())) ? lo : hi;
         s.setValue(s.defaultValue, juce::sendNotificationSync);
+    }
+    void setDimmed(bool d) {
+        if (d == dimmed) return;
+        dimmed = d;
+        lo.setEnabled(!d); hi.setEnabled(!d);
+        repaint();
     }
 
     void paint(juce::Graphics& g) override {
@@ -179,44 +202,176 @@ struct FreqRange : juce::Component, private juce::Timer {
         const auto& p = L.pal();
         auto r = getLocalBounds();
         auto head = r.removeFromTop(20);
-        ui::text(g, u8("Pitches it listens for"), head, L.body(15.f, true), p.fg);
-        ui::text(g, hzText(lo.getValue()) + u8(" – ") + hzText(hi.getValue()), head, L.mono(13.f), p.fg, juce::Justification::centredRight);
+        ui::text(g, cfg.title, head, L.body(15.f, true), p.fg);
+        ui::text(g, cfg.fmt(lo.getValue()) + u8(" – ") + cfg.fmt(hi.getValue()), head, L.mono(13.f), dimmed ? p.muted : p.fg,
+                 juce::Justification::centredRight);
         const auto t = track();
         g.setColour(p.meterOff);
         g.fillRect(t.reduced(0, 10));
         const float x0 = xOf(lo.getValue()), x1 = xOf(hi.getValue());
-        g.setColour(p.fg);
+        g.setColour(dimmed ? p.muted : p.fg);
         g.fillRect(juce::Rectangle<float>(x0, (float)t.getY() + 10.f, x1 - x0, (float)t.getHeight() - 20.f));
-        // what it hears right now
-        if (marker > 0.f) {
-            const double hz = 440.0 * std::pow(2.0, (marker - 69.0) / 12.0);
-            const float xm = xOf(hz);
+        if (!std::isnan(marker)) {
+            const float xm = xOf(marker);
             g.setColour(p.signal);
             g.fillRect(xm - 1.5f, (float)t.getY() + 2.f, 3.f, (float)t.getHeight() - 4.f);
         }
-        for (auto* s : {&lo, &hi}) {
-            const auto b = s->getBounds().toFloat().reduced(2.f, 0.f);
-            g.setColour(p.bg);
-            g.fillRect(b);
-            g.setColour(p.line);
-            g.drawRect(b, p.lineW);
-            g.fillRect(b.getCentreX() - 1.f, b.getY() + 7.f, 2.f, b.getHeight() - 14.f);
-        }
-        // axis
+        if (!dimmed)
+            for (auto* s : {&lo, &hi}) {
+                const auto b = s->getBounds().toFloat().reduced(2.f, 0.f);
+                g.setColour(p.bg);
+                g.fillRect(b);
+                g.setColour(p.line);
+                g.drawRect(b, p.lineW);
+                g.fillRect(b.getCentreX() - 1.f, b.getY() + 7.f, 2.f, b.getHeight() - 14.f);
+            }
         auto ticks = getLocalBounds().withTrimmedTop(t.getBottom() + 2).withHeight(16);
-        for (double f : {50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0}) {
-            const float x = xOf(f);
+        for (auto& [v, label] : cfg.ticks) {
+            const float x = xOf(v);
             g.setColour(p.hair);
             g.fillRect(x, (float)t.getBottom() - 2.f, 1.f, 4.f);
-            ui::text(g, f >= 1000.0 ? juce::String((int)(f / 1000)) + "k" : juce::String((int)f),
-                     juce::Rectangle<int>(juce::roundToInt(x) - 20, ticks.getY(), 40, 16), L.mono(10.5f), p.muted, juce::Justification::centred);
+            ui::text(g, label, juce::Rectangle<int>(juce::roundToInt(x) - 20, ticks.getY(), 40, 16), L.mono(10.5f), p.muted,
+                     juce::Justification::centred);
         }
         auto sent = getLocalBounds().withTrimmedTop(ticks.getBottom() + 4).withHeight(20);
-        ui::text(g, u8("Below ") + hzText(lo.getValue()) + u8(" it filters out rumble and wind. Notes above ")
-                    + hzText(hi.getValue()) + u8(" are not heard as pitches."),
-                 sent, L.body(13.f), p.fg);
+        ui::text(g, cfg.sentence(lo.getValue(), hi.getValue()), sent, L.body(13.f), p.fg);
         g.setColour(p.hair);
         g.fillRect(0, getHeight() - 1, getWidth(), 1);
+    }
+};
+
+static std::unique_ptr<RangeSlider> makeFreqRange(DialogueProcessor& proc) {
+    RangeSlider::Config c;
+    c.lowId = "lowcut"; c.highId = "highcut";
+    c.title = u8("Pitches it listens for");
+    c.lowTitle = u8("Low cut");
+    c.lowDesc = u8("Lowest pitch it listens for. Below it, sounds are filtered out: rumble, wind, handling noise.");
+    c.highTitle = u8("High cut");
+    c.highDesc = u8("Highest pitch it listens for.");
+    c.vMin = 30.0; c.vMax = 12000.0; c.logScale = true; c.minRatioOrGap = 1.5;
+    c.fmt = [](double v) { return hzText(v); };
+    for (double f : {50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0})
+        c.ticks.push_back({f, f >= 1000.0 ? juce::String((int)(f / 1000)) + "k" : juce::String((int)f)});
+    c.sentence = [](double lo, double hi) {
+        return u8("Below ") + hzText(lo) + u8(" it filters out rumble and wind. Notes above ") + hzText(hi) + u8(" are not heard as pitches.");
+    };
+    c.marker = [&proc] {
+        const float m = proc.uiHearing.load() ? proc.uiPitch.load() : 0.f;
+        return m > 0.f ? (float)(440.0 * std::pow(2.0, (m - 69.0) / 12.0)) : std::numeric_limits<float>::quiet_NaN();
+    };
+    return std::make_unique<RangeSlider>(proc, std::move(c));
+}
+
+static std::unique_ptr<RangeSlider> makeLoudRange(DialogueProcessor& proc) {
+    RangeSlider::Config c;
+    c.lowId = "vellow"; c.highId = "velhigh";
+    c.title = u8("Your soft and loud (audio)");
+    c.lowTitle = u8("Softest attack");
+    c.lowDesc = u8("An attack this soft, or softer, counts as the softest velocity.");
+    c.highTitle = u8("Loudest attack");
+    c.highDesc = u8("An attack this loud, or louder, counts as the loudest velocity.");
+    c.vMin = -66.0; c.vMax = 0.0; c.logScale = false; c.minRatioOrGap = 6.0;
+    c.fmt = [](double v) { return juce::String(juce::roundToInt(v)) + " dB"; };
+    for (double d : {-60.0, -48.0, -36.0, -24.0, -12.0, 0.0}) c.ticks.push_back({d, juce::String((int)d)});
+    c.sentence = [&proc](double lo, double hi) {
+        if (getParam(proc, "velauto") > 0.5f) return juce::String(u8("Auto: it learns the range of your attacks. The orange mark is your last attack."));
+        return u8("Attacks from ") + juce::String(juce::roundToInt(lo)) + u8(" to ") + juce::String(juce::roundToInt(hi))
+               + u8(" dB use the whole velocity range. The orange mark is your last attack.");
+    };
+    c.marker = [&proc] {
+        const float d = proc.uiAttackDb.load();
+        return d > -66.f ? d : std::numeric_limits<float>::quiet_NaN();
+    };
+    return std::make_unique<RangeSlider>(proc, std::move(c));
+}
+
+// The scale it plays in, on a one-octave keyboard: in Fixed the key you click is the root,
+// in Custom each key turns a note on or off. Each key is a button (Tab, Space, screen reader).
+struct ScaleKeys : juce::Component, private juce::Timer {
+    DialogueProcessor& proc;
+    juce::OwnedArray<juce::TextButton> keys;
+    juce::ComboBox type;
+    std::unique_ptr<ComboAtt> typeAtt;
+    int shownMask = -1, shownMode = -1, shownRoot = -1;
+
+    explicit ScaleKeys(DialogueProcessor& p) : proc(p) {
+        setTitle(u8("Notes of the scale"));
+        setFocusContainerType(FocusContainerType::focusContainer);
+        for (int i = 0; i < 12; ++i) {
+            auto* b = keys.add(new juce::TextButton(lpfd::Harmony::pcName(i)));
+            b->setClickingTogglesState(false);
+            b->onClick = [this, i] { clicked(i); };
+            addAndMakeVisible(b);
+        }
+        for (int i = 0; i < lpfd::Harmony::NumScales; ++i) type.addItem(lpfd::Harmony::scaleName(i), i + 1);
+        type.setTitle(u8("Scale type"));
+        addAndMakeVisible(type);
+        typeAtt = std::make_unique<ComboAtt>(proc.apvts, "scaletype", type);
+        startTimerHz(10);
+    }
+    int mode() const { return juce::roundToInt(getParam(proc, "scalemode")); }
+    void clicked(int pc) {
+        const int m = mode();
+        if (m == 2) setParam(proc, "scaleroot", (float)pc);
+        else if (m == 3) {
+            int mask = juce::roundToInt(getParam(proc, "scalecustom"));
+            mask ^= 1 << pc;
+            if (mask == 0) mask = 1 << pc;                     // never empty
+            setParam(proc, "scalecustom", (float)mask);
+        }
+        refresh();
+    }
+    void timerCallback() override { refresh(); }
+    void refresh() {
+        const int m = mode(), mask = proc.uiAnswerScale.load(), root = juce::roundToInt(getParam(proc, "scaleroot"));
+        if (m == shownMode && mask == shownMask && root == shownRoot) return;
+        shownMode = m; shownMask = mask; shownRoot = root;
+        for (int i = 0; i < 12; ++i) {
+            auto* b = keys[i];
+            const bool in = m == 1 ? true : (mask >> i & 1) != 0;
+            b->setToggleState(in, juce::dontSendNotification);
+            b->getProperties().set("root", m == 2 && i == root);
+            b->setEnabled(m == 2 || m == 3);
+            juce::String d = juce::String(lpfd::Harmony::pcName(i)) + (in ? u8(": in the scale") : u8(": not in the scale"));
+            if (m == 2) d += i == root ? u8(", root.") : u8(". Click to make it the root.");
+            else if (m == 3) d += u8(". Click to switch it.");
+            b->setDescription(d);
+        }
+        type.setEnabled(m == 2);
+        repaint();
+    }
+    void resized() override {
+        auto r = getLocalBounds().withTrimmedTop(24);
+        auto row = r.removeFromTop(42);
+        r.removeFromTop(8);
+        type.setBounds(r.removeFromTop(40).withTrimmedLeft(64).withWidth(juce::jmin(260, r.getWidth() - 64)));
+        const int kw = row.getWidth() / 12;
+        for (int i = 0; i < 12; ++i) keys[i]->setBounds(row.getX() + i * kw, row.getY(), kw - 2, row.getHeight());
+    }
+    void paint(juce::Graphics& g) override {
+        auto& L = lookOf(*this);
+        const auto& p = L.pal();
+        const int m = mode();
+        const juce::String what = m == 0 ? u8("Auto: the scale it hears from you (here, what it plays in now).")
+                                : m == 1 ? u8("Free: every note is allowed.")
+                                : m == 2 ? u8("Fixed: click a key for the root, pick the type on the right.")
+                                         : u8("Custom: click the notes you want.");
+        ui::text(g, what, getLocalBounds().removeFromTop(20), L.body(13.f), p.fg);
+        ui::text(g, u8("Type"), juce::Rectangle<int>(0, type.getY(), 60, type.getHeight()), L.body(14.f, true), m == 2 ? p.fg : p.muted);
+    }
+    void paintOverChildren(juce::Graphics& g) override {
+        auto& L = lookOf(*this);
+        const auto& p = L.pal();
+        for (auto* b : keys) {
+            auto r = b->getBounds().toFloat();
+            const bool in = b->getToggleState();
+            g.setColour(in ? p.fg : p.bg);
+            g.fillRect(r);
+            g.setColour(p.line);
+            g.drawRect(r, p.lineW);
+            if ((bool)b->getProperties()["root"]) { g.setColour(p.signal); g.fillRect(r.removeFromBottom(6.f)); }
+            ui::text(g, b->getButtonText(), b->getBounds(), L.mono(13.f), in ? p.bg : p.muted, juce::Justification::centred);
+        }
     }
 };
 
@@ -411,10 +566,9 @@ public:
         // hearing children
         {
             auto r = hearingR.reduced(14, 10);
-            r.removeFromRight(354);
+            r.removeFromRight(384);
             r.removeFromTop(48);
             auto row = r.removeFromTop(36);
-            row.removeFromLeft(44);
             measureBtn.setBounds(row.removeFromRight(150).reduced(0, 1));
             row.removeFromRight(8);
             gateSlider.setBounds(row);
@@ -498,7 +652,7 @@ public:
         if (c == 'f') { freezeBtn.triggerClick(); return true; }
         if (c == 's') { measureBtn.triggerClick(); return true; }
         if (c == '?') { openDialog(help); return true; }
-        if (c >= '1' && c <= '6') { applyPreset((int)(c - '1')); return true; }
+        if (c >= '1' && c <= '8') { applyPreset((int)(c - '1')); return true; }
         return false;
     }
 
@@ -727,31 +881,32 @@ private:
         const double tMin = now - span * nowPos;
 
         // collect notes
-        struct N { double on, off; int pitch; };
+        struct N { double on, off; int pitch; int vel; };
         std::vector<N> yn, hn;
         struct T { double t; int reason; float info; };
         std::vector<T> trig;
         double openYou[128], openHim[128];
+        int velYou[128] = {}, velHim[128] = {};
         for (int i = 0; i < 128; ++i) openYou[i] = openHim[i] = -1;
         for (int i = 0; i < tlCount; ++i) {
             const auto& e = tl[(size_t)i];
             const double t = (double)e.time / sr;
             switch (e.kind) {
-            case lpfd::TimelineEvent::PlayerOn: openYou[e.pitch] = t; break;
+            case lpfd::TimelineEvent::PlayerOn: openYou[e.pitch] = t; velYou[e.pitch] = e.vel; break;
             case lpfd::TimelineEvent::PlayerOff:
-                if (openYou[e.pitch] >= 0) { yn.push_back({openYou[e.pitch], t, e.pitch}); openYou[e.pitch] = -1; }
+                if (openYou[e.pitch] >= 0) { yn.push_back({openYou[e.pitch], t, e.pitch, velYou[e.pitch]}); openYou[e.pitch] = -1; }
                 break;
-            case lpfd::TimelineEvent::AnswerOn: openHim[e.pitch] = t; break;
+            case lpfd::TimelineEvent::AnswerOn: openHim[e.pitch] = t; velHim[e.pitch] = e.vel; break;
             case lpfd::TimelineEvent::AnswerOff:
-                if (openHim[e.pitch] >= 0) { hn.push_back({openHim[e.pitch], t, e.pitch}); openHim[e.pitch] = -1; }
+                if (openHim[e.pitch] >= 0) { hn.push_back({openHim[e.pitch], t, e.pitch, velHim[e.pitch]}); openHim[e.pitch] = -1; }
                 break;
             case lpfd::TimelineEvent::Trigger: trig.push_back({t, e.reason, e.info}); break;
             default: break;
             }
         }
         for (int i = 0; i < 128; ++i) {
-            if (openYou[i] >= 0) yn.push_back({openYou[i], now, i});
-            if (openHim[i] >= 0) hn.push_back({openHim[i], now, i});
+            if (openYou[i] >= 0) yn.push_back({openYou[i], now, i, velYou[i]});
+            if (openHim[i] >= 0) hn.push_back({openHim[i], now, i, velHim[i]});
         }
 
         g.saveState();
@@ -792,8 +947,10 @@ private:
                     for (size_t k = i; k <= j; ++k) {
                         const float nx = xOf(v[k].on), nw = std::max(3.f, xOf(v[k].off) - nx - 1.f);
                         const float ny = box.getBottom() - 6.f - (box.getHeight() - 14.f) * (float)(v[k].pitch - lo) / (float)(hi - lo);
+                        // thickness = velocity (2 to 9 px): you can see how hard it heard you, and answers
+                        const float th = v[k].vel > 0 ? 2.f + 7.f * (float)v[k].vel / 127.f : 5.f;
                         g.setColour(noteC);
-                        g.fillRect(nx, ny - 3.f, nw, 5.f);
+                        g.fillRect(nx, ny - th * 0.5f, nw, th);
                     }
                     if (isHim && settings.shapes) {
                         juce::Path dia;
@@ -811,6 +968,7 @@ private:
                         juce::String why = t.reason == lpfd::TimelineEvent::Silence ? u8("after ") + fmtS(t.info) + u8(" of silence")
                                          : t.reason == lpfd::TimelineEvent::Reflex ? u8("reflex")
                                          : t.reason == lpfd::TimelineEvent::Held ? u8("over your held note")
+                                         : t.reason == lpfd::TimelineEvent::PlayAlong ? u8("plays along at ") + juce::String(juce::roundToInt(t.info)) + " BPM"
                                          : u8("cut in after ") + juce::String((int)t.info) + " notes";
                         const auto f = L.body(12.5f);
                         const int tw = (int)juce::GlyphArrangement::getStringWidth(f, why) + 4;
@@ -879,7 +1037,7 @@ private:
     void paintHearing(juce::Graphics& g, ui::Look& L, const ui::Palette& p) {
         panel(g, p, hearingR);
         auto r = hearingR;
-        auto read = r.removeFromRight(354);
+        auto read = r.removeFromRight(384);
         g.setColour(p.line);
         g.fillRect(read.getX(), read.getY(), (int)p.lineW, read.getHeight());
         auto cell = [&](juce::Rectangle<int> c, const juce::String& label, const juce::String& v, bool sep) {
@@ -889,9 +1047,14 @@ private:
             ui::text(g, v, c.withTrimmedTop(46).withHeight(32), L.mono(v.length() > 9 ? 15.f : 20.f), p.fg);
         };
         const bool src = getParam(proc, "source") >= 0.5f;
-        cell(read.removeFromLeft(92), "Note", hearing && pitch > 0.f ? noteName(juce::roundToInt(pitch)) : (src ? juce::String("MIDI") : "---"), true);
-        cell(read.removeFromLeft(170), "Scale", ui::upper(keyText(keyRoot, scaleType)), true);
-        cell(read, "Chord", chordText(chordRoot, chordType), false);
+        cell(read.removeFromLeft(76), "Note", hearing && pitch > 0.f ? noteName(juce::roundToInt(pitch)) : (src ? juce::String("MIDI") : "---"), true);
+        cell(read.removeFromLeft(166), "Scale", ui::upper(keyText(keyRoot, scaleType)), true);
+        cell(read.removeFromLeft(72), "Chord", chordText(chordRoot, chordType), true);
+        {
+            const float bpm = proc.uiPulseBpm.load();
+            cell(read, proc.uiPlayingAlong.load() ? u8("Along") : u8("Pulse"),
+                 bpm > 0.f ? juce::String(juce::roundToInt(bpm)) + (proc.uiPulseDiv.load() == 3 ? u8("/3") : juce::String()) : juce::String("---"), false);
+        }
 
         r = r.reduced(14, 10);
         auto title = r.removeFromTop(20);
@@ -911,7 +1074,7 @@ private:
         g.setColour(p.signal);
         g.fillRect(gx - 2.f, (float)meter.getY() - 4.f, 4.f, (float)meter.getHeight() + 8.f);
         auto row = r.removeFromTop(36);
-        ui::text(g, "Threshold", row.removeFromLeft(44), L.body(13.f), p.muted);
+
         const int cs = proc.calibState.load();
         juce::String note;
         if (cs == 1) note = u8("Measuring silence… don't play (") + juce::String(juce::roundToInt(proc.calibProgress.load() * 100)) + " %)";
@@ -942,8 +1105,14 @@ private:
         }
         auto key = [this] { return keyRoot >= 0 ? keyText(keyRoot, scaleType) : u8("the detected scale"); };
         auto add = [this](QSlider* q) { charSliders.add(q); character.addAndMakeVisible(q); };
-        add(new QSlider(proc, "patience", u8("When does it answer?"), u8("Every note"), u8("At the end"), [](double v) {
-            if (v < 0.04) return u8("It answers every note, without waiting.");
+        add(new QSlider(proc, "patience", u8("When does it answer?"), u8("Plays along"), u8("At the end"), [this](double v) {
+            if (v < lpfd::Engine::kPlayAlongZone) {
+                if (getParam(proc, "groove") < 0.1f) return juce::String(u8("Plays along needs \u201cDoes it follow your rhythm?\u201d: for now, every note."));
+                const float bpm = proc.uiPulseBpm.load();
+                return bpm > 0.f ? u8("Plays along with you on your pulse (") + juce::String(juce::roundToInt(bpm)) + u8(" BPM), a bar behind.")
+                                 : juce::String(u8("Plays along once it finds your pulse. Until then: every note."));
+            }
+            if (v < 0.18) return u8("It answers every note, without waiting.");
             return u8("It listens to about ") + juce::String(1 + juce::roundToInt(v * v * 15)) + u8(" notes, or ")
                    + fmtS((float)(0.08 + 1.92 * std::pow(v, 1.5))) + u8(" of silence.");
         }));
@@ -965,6 +1134,14 @@ private:
         add(new QSlider(proc, "length", u8("Length of its answers"), "Short", "Long", [](double v) {
             return u8("About ") + juce::String(juce::jmax(1, juce::roundToInt(6 * v))) + u8(" notes for every 6 heard.");
         }));
+        add(new QSlider(proc, "groove", u8("Does it follow your rhythm?"), u8("Free"), u8("Your groove"), [this](double v) {
+            if (v < 0.1) return juce::String(u8("Free timing: it doesn't look for a pulse."));
+            const float bpm = proc.uiPulseBpm.load();
+            const juce::String how = v > 0.7 ? u8("keeps your patterns, tight on your grid")
+                                             : u8("takes your patterns, a little loosely");
+            return bpm > 0.f ? u8("On your pulse (") + juce::String(juce::roundToInt(bpm)) + u8(" BPM): ") + how + "."
+                             : u8("No pulse in your playing yet. When there is one, it ") + how + ".";
+        }));
         add(new QSlider(proc, "humanize", "Feel", "Machine", "Human", [](double v) {
             return v < 0.1 ? u8("Instant reaction, strict timing, even dynamics.")
                            : u8("Reacts with a slightly varying delay, breathes, varies its dynamics.");
@@ -980,9 +1157,9 @@ private:
         auto r = character.getLocalBounds().reduced(14, 0);
         r.removeFromTop(42);
         auto grid = r.removeFromTop(94);
-        const int bw = (grid.getWidth() - 12) / 3;
+        const int bw = (grid.getWidth() - 18) / 4;
         for (int i = 0; i < presetBtns.size(); ++i)
-            presetBtns[i]->setBounds(grid.getX() + (i % 3) * (bw + 6), grid.getY() + (i / 3) * 50, bw, 44);
+            presetBtns[i]->setBounds(grid.getX() + (i % 4) * (bw + 6), grid.getY() + (i / 4) * 50, bw, 44);
         r.removeFromTop(8);
         advancedBtn.setBounds(character.getLocalBounds().removeFromBottom(48).reduced(10, 4));
         r.removeFromBottom(50);
@@ -992,13 +1169,14 @@ private:
 
     void updatePresetHighlight() {
         const float v[] = {getParam(proc, "patience"), getParam(proc, "interruption"), getParam(proc, "contrast"),
-                           getParam(proc, "random"), ui::lengthTo01(getParam(proc, "length")), getParam(proc, "humanize")};
+                           getParam(proc, "random"), ui::lengthTo01(getParam(proc, "length")), getParam(proc, "humanize"),
+                           getParam(proc, "groove")};
         int found = -1;
         for (int i = 0; i < (int)ui::presets().size(); ++i) {
             const auto& pr = ui::presets()[(size_t)i];
-            const float w[] = {pr.patience, pr.interruption, pr.contrast, pr.random, pr.length01, pr.humanize};
+            const float w[] = {pr.patience, pr.interruption, pr.contrast, pr.random, pr.length01, pr.humanize, pr.groove};
             bool same = true;
-            for (int k = 0; k < 6; ++k) same = same && std::abs(v[k] - w[k]) < 0.015f;
+            for (int k = 0; k < 7; ++k) same = same && std::abs(v[k] - w[k]) < 0.015f;
             if (same) { found = i; break; }
         }
         if (found != presetIndex) {
@@ -1019,6 +1197,7 @@ public:
         setParam(proc, "random", pr.random);
         setParam(proc, "length", ui::lengthFrom01(pr.length01));
         setParam(proc, "humanize", pr.humanize);
+        setParam(proc, "groove", pr.groove);
         if (settings.speak)
             juce::AccessibilityHandler::postAnnouncement(u8("Character: ") + u8(pr.name), juce::AccessibilityHandler::AnnouncementPriority::medium);
     }
@@ -1029,11 +1208,15 @@ private:
     juce::Component advInner;
     juce::TextButton advBack{"Back"}, routeBack{"Back"};
     std::unique_ptr<ui::Choice> earChoice, gridChoice, sourceChoice, bendChoice;
-    std::unique_ptr<FreqRange> band;
+    std::unique_ptr<RangeSlider> band, loudRange;
+    std::unique_ptr<ScaleKeys> scaleKeys;
+    std::unique_ptr<ui::Choice> velChoice, scaleChoice;
     juce::OwnedArray<QSlider> advSliders;
     juce::ComboBox lowBox, highBox, inBox, outBox;
     std::unique_ptr<ComboAtt> inAtt;
     juce::ToggleButton thruBtn{u8("Also send your MIDI playing out")};
+    juce::ToggleButton velAutoBtn{u8("Soft and loud: learn them by itself")};
+    std::unique_ptr<ButtonAtt> velAutoAtt;
     std::unique_ptr<ButtonAtt> thruAtt;
     struct Strip : juce::Component {
         DialogueProcessor* proc = nullptr;
@@ -1100,7 +1283,7 @@ private:
             setParam(proc, "highcut", i == 1 ? 10000.f : 2000.f);
         };
         advInner.addAndMakeVisible(*earChoice);
-        band = std::make_unique<FreqRange>(proc);
+        band = makeFreqRange(proc);
         advInner.addAndMakeVisible(*band);
         auto addQ = [this](QSlider* q) { advSliders.add(q); advInner.addAndMakeVisible(q); };
         addQ(new QSlider(proc, "sensitivity", u8("Attack sensitivity"), "Little", "A lot", [](double v) {
@@ -1108,11 +1291,31 @@ private:
                  : v < 0.3 ? u8("Only clear attacks.") : u8("Balanced.");
         }));
         heading(u8("EXPRESSION"));
-        addQ(new QSlider(proc, "dynamics", u8("Dynamics"), u8("Even"), u8("Like yours"), [](double v) {
-            return v < 0.1 ? u8("Every answer at the same strength.")
-                 : v < 0.6 ? u8("Softer when you play soft, a little.")
-                           : u8("Soft when you play soft, loud when you play loud.");
+        velChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("velmode"), u8("Velocity of its notes"),
+                                                 juce::StringArray{u8("Follows you"), u8("Imitates"), u8("Opposite"), u8("Fixed")});
+        velChoice->labelHeight = 24;
+        advInner.addAndMakeVisible(*velChoice);
+        addQ(new QSlider(proc, "velamount", u8("Velocity amount"), u8("Flat"), u8("Exaggerated"), [this](double v) {
+            const int m = juce::roundToInt(getParam(proc, "velmode"));
+            if (m == 3) return juce::String(u8("Not used with Fixed velocity."));
+            const juce::String what = m == 0 ? u8("your last notes, accent by accent")
+                                    : m == 1 ? u8("the phrase it quotes")
+                                             : u8("the opposite of you (soft when you are loud)");
+            return v < 0.05 ? u8("Every note at your current level.")
+                            : u8("Follows ") + what + (v > 1.05 ? u8(", exaggerated (") : u8(" (")) + juce::String(juce::roundToInt(v * 100)) + " %).";
         }));
+        addQ(new QSlider(proc, "velfixed", u8("Fixed velocity"), "1", "127", [this](double v) {
+            return juce::roundToInt(getParam(proc, "velmode")) == 3
+                       ? u8("Every note at velocity ") + juce::String(juce::roundToInt(v)) + "."
+                       : juce::String(u8("Used when Velocity is Fixed."));
+        }));
+        velAutoBtn.getProperties().set("desc", u8("Learns the range of your attacks by itself. Off: set it below."));
+        velAutoBtn.getProperties().set("topAlign", true);
+        velAutoBtn.setDescription(u8("Learns the range of your attacks by itself. Off: set it below."));
+        advInner.addAndMakeVisible(velAutoBtn);
+        velAutoAtt = std::make_unique<ButtonAtt>(proc.apvts, "velauto", velAutoBtn);
+        loudRange = makeLoudRange(proc);
+        advInner.addAndMakeVisible(*loudRange);
         addQ(new QSlider(proc, "sustain", u8("Held notes"), u8("Lets go"), u8("Holds with you"), [](double v) {
             return v < 0.03 ? u8("Its notes keep their own length.")
                  : v > 0.97 ? u8("While you hold a note, it holds its own, and lets go with you.")
@@ -1126,6 +1329,17 @@ private:
                                                   juce::StringArray{u8("±2"), u8("±12"), u8("±24"), u8("±48")});
         bendChoice->labelHeight = 24;
         advInner.addAndMakeVisible(*bendChoice);
+        heading(u8("SCALE"));
+        scaleChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("scalemode"), u8("The scale it answers in"),
+                                                   juce::StringArray{u8("Auto"), u8("Free"), u8("Fixed"), u8("Custom")});
+        scaleChoice->labelHeight = 24;
+        advInner.addAndMakeVisible(*scaleChoice);
+        scaleKeys = std::make_unique<ScaleKeys>(proc);
+        advInner.addAndMakeVisible(*scaleKeys);
+        addQ(new QSlider(proc, "scale", "It stays in the scale", "Loosely", "Always", [this](double v) {
+            if (juce::roundToInt(getParam(proc, "scalemode")) == 1) return juce::String(u8("Not used with a Free scale."));
+            return u8("In the scale ") + juce::String(juce::roundToInt(v * 100)) + u8("% of the time.");
+        }));
         heading(u8("RANGE OF ITS ANSWERS"));
         strip.proc = &proc;
         advInner.addAndMakeVisible(strip);
@@ -1146,9 +1360,6 @@ private:
         }));
         addQ(new QSlider(proc, "fidelity", "It quotes", "Snippets", "Long passages", [](double v) {
             return v < 0.3 ? u8("It freely recombines your phrases.") : v < 0.7 ? u8("It quotes short fragments.") : u8("It quotes long passages.");
-        }));
-        addQ(new QSlider(proc, "scale", "It stays in the scale", "Free", "Always", [](double v) {
-            return u8("In the scale ") + juce::String(juce::roundToInt(v * 100)) + u8("% of the time.");
         }));
         gridChoice = std::make_unique<ui::Choice>(*proc.apvts.getParameter("grid"), u8("Lock to the song's grid"),
                                                   juce::StringArray{"Free", "1/4", "1/8", "1/16"});
@@ -1189,12 +1400,20 @@ private:
         place(*earChoice, 56);
         place(*band, 100);
         place(*advSliders[0], 74);
-        place(*headings[hi++], 28);
-        place(*advSliders[1], 74);
-        place(*advSliders[2], 74);
-        place(*advSliders[3], 74);
+        place(*headings[hi++], 28);                 // EXPRESSION
+        place(*velChoice, 70);
+        place(*advSliders[1], 74);                  // velocity amount
+        place(*advSliders[2], 74);                  // fixed velocity
+        place(velAutoBtn, 52);
+        place(*loudRange, 100);
+        place(*advSliders[3], 74);                  // held notes
+        place(*advSliders[4], 74);                  // bends
         place(*bendChoice, 70);
-        place(*headings[hi++], 28);
+        place(*headings[hi++], 28);                 // SCALE
+        place(*scaleChoice, 70);
+        place(*scaleKeys, 116);
+        place(*advSliders[5], 74);                  // scale lock
+        place(*headings[hi++], 28);                 // RANGE
         place(strip, 34);
         {
             const int cw = (w - 28 - 10) / 2;
@@ -1203,9 +1422,8 @@ private:
         }
         place(*advLabels[li++], 20);
         place(*headings[hi++], 28);
-        place(*advSliders[4], 74);
-        place(*advSliders[5], 74);
-        place(*advSliders[6], 74);
+        place(*advSliders[6], 74);                  // memory
+        place(*advSliders[7], 74);                  // fidelity
         place(*gridChoice, 70);
         place(*headings[hi++], 28);
         place(*sourceChoice, 70);
@@ -1499,9 +1717,9 @@ private:
         r.removeFromTop(14);
         r.removeFromTop(36);       // step 3 title
         auto grid = r.removeFromTop(132);
-        const int pw = (grid.getWidth() - 20) / 3;
+        const int pw = (grid.getWidth() - 30) / 4;
         for (int i = 0; i < welcomePresets.size(); ++i)
-            welcomePresets[i]->setBounds(grid.getX() + (i % 3) * (pw + 10), grid.getY() + (i / 3) * 68, pw, 62);
+            welcomePresets[i]->setBounds(grid.getX() + (i % 4) * (pw + 10), grid.getY() + (i / 4) * 68, pw, 62);
         welcomeStart.setBounds(r.getX(), wMain.getBottom() - 18 - 52, 240, 52);
     }
 
@@ -1623,13 +1841,14 @@ private:
         g.fillAll(juce::Colours::black.withAlpha(0.55f));
         dialogFrame(g, "HELP", u8("How it plays with you"));
         auto r = dialogR.reduced(22, 0).withTrimmedTop(90);
-        const char* pts[4][2] = {
-            {"It listens", "It remembers your notes, rhythms and dynamics, and recognises the scale and the chord."},
-            {"It waits its turn", "\u201cWhen does it answer?\u201d sets how many notes or how much silence it waits for. The countdown shows when it's about to speak."},
+        const char* pts[5][2] = {
+            {"It listens", "It remembers your notes, rhythms and dynamics, and recognises the scale, the chord and the pulse of your playing."},
+            {"It waits its turn", "\u201cWhen does it answer?\u201d sets how many notes or how much silence it waits for. At the far left, it plays along with you."},
+            {"It follows your rhythm", "Not the song's tempo: yours. On your pulse it answers your bars with your patterns (\u201cDoes it follow your rhythm?\u201d)."},
             {"It answers in MIDI", "With your own phrases, quoted or reshuffled, imitated or contradicted. The sound comes from the synth on its output."},
-            {"The conversation", "You and It blocks for the last 12 seconds, with the reason for each answer."}};
+            {"The conversation", "You and It blocks for the last 12 seconds, with the reason for each answer. Thicker notes are louder."}};
         for (auto& pt : pts) {
-            auto row = r.removeFromTop(86);
+            auto row = r.removeFromTop(72);
             ui::text(g, u8(pt[0]), row.removeFromTop(22), L.body(15.5f, true), p.fg);
             ui::text(g, u8(pt[1]), row, L.body(14.f), p.fg, juce::Justification::topLeft, 3);
         }
@@ -1642,7 +1861,7 @@ private:
         auto& L = lookOf(*this);
         const auto& p = L.pal();
         const char* keys[10][2] = {{"Tab", "Next control"}, {"Shift+Tab", "Previous control"}, {"← →", "Adjust"}, {"Shift", "Fine adjust"},
-                                   {"Space", "Answer on / off"}, {"F", "Freeze memory"}, {"S", "Measure silence"}, {"1 to 6", "Pick a character"},
+                                   {"Space", "Answer on / off"}, {"F", "Freeze memory"}, {"S", "Measure silence"}, {"1 to 8", "Pick a character"},
                                    {"Del", "Back to default"}, {"Esc", "Close, go back"}};
         g.setColour(p.hair);
         g.drawRect(r.toFloat(), 1.5f);
@@ -1769,7 +1988,12 @@ private:
         if (character.isVisible() && liveTick % 15 == 0) for (auto* q : charSliders) q->repaint();
         if (welcome.isVisible()) welcome.repaint();
         if (answeringNow != lastAnswering) { lastAnswering = answeringNow; repaint(); }
-        if (advanced.isVisible() && liveTick % 15 == 0) syncAdvancedBoxes();
+        if (advanced.isVisible() && liveTick % 15 == 0) {
+            syncAdvancedBoxes();
+            if (loudRange) loudRange->setDimmed(getParam(proc, "velauto") > 0.5f);
+            for (auto* q : advSliders) q->repaint();
+            if (scaleKeys) scaleKeys->repaint();
+        }
     }
 
     void announce() {

@@ -49,6 +49,9 @@ public:
     std::atomic<int> uiMemory{0};
     std::atomic<bool> uiHearing{false}, uiAnswering{false};
     std::atomic<float> uiLevelDb{-120.f}, uiPitch{0.f};
+    std::atomic<float> uiPulseBpm{0.f}, uiAttackDb{-120.f};
+    std::atomic<int> uiPulseDiv{2}, uiAnswerScale{0};
+    std::atomic<bool> uiPlayingAlong{false};
     std::atomic<int> uiKeyRoot{-1}, uiScale{0}, uiChordRoot{-1}, uiChord{0};
     std::atomic<int> uiPhase{0}, uiHeardInPhrase{0}, uiEventsNeeded{1};
     std::atomic<float> uiWaitProgress{0.f}, uiWaitRemaining{0.f}, uiSilenceWait{1.f};
@@ -92,7 +95,11 @@ private:
     std::atomic<float>* pSource = nullptr;   std::atomic<float>* pMidiIn = nullptr;
     std::atomic<float>* pThru = nullptr;
     std::atomic<float>* pLowCut = nullptr;   std::atomic<float>* pHighCut = nullptr;
-    std::atomic<float>* pDynamics = nullptr; std::atomic<float>* pSustain = nullptr;
+    std::atomic<float>* pSustain = nullptr;
+    std::atomic<float>* pVelMode = nullptr; std::atomic<float>* pVelAmount = nullptr; std::atomic<float>* pVelFixed = nullptr;
+    std::atomic<float>* pVelAuto = nullptr; std::atomic<float>* pVelLow = nullptr; std::atomic<float>* pVelHigh = nullptr;
+    std::atomic<float>* pScaleMode = nullptr; std::atomic<float>* pScaleRoot = nullptr; std::atomic<float>* pScaleType = nullptr;
+    std::atomic<float>* pScaleCustom = nullptr; std::atomic<float>* pGroove = nullptr;
     std::atomic<float>* pBend = nullptr;     std::atomic<float>* pBendRange = nullptr;
     struct InNote { int pos; bool on; int ch, pitch, vel; };
     std::vector<InNote> inNotes;   // preallocated

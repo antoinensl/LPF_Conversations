@@ -7,6 +7,7 @@
 #include <cstring>
 #include "analyzer.h"
 #include "memory.h"
+#include "pulse.h"
 
 namespace lpfd {
 
@@ -33,7 +34,20 @@ struct Params {
     float lowCutHz = 0.f;       // pitches it listens for (0 = automatic for the listening mode)
     float highCutHz = 0.f;
     // expression
-    float dynamics = 0.7f;      // 0 = even velocity .. 1 = follows your dynamics (over your own range)
+    // velocity of its notes: 0 follows you (your last notes, note by note), 1 imitates the phrase it
+    // quotes, 2 opposite of you, 3 fixed
+    int velMode = 0;
+    float velAmount = 1.f;      // 0 = flat at your level .. 1 = like you .. 2 = exaggerated
+    int velFixed = 100;
+    bool velAuto = true;        // audio: learn the range of your attacks; else velLowDb..velHighDb
+    float velLowDb = -40.f, velHighDb = -6.f;
+    // scale it answers in: 0 auto (detected), 1 free (chromatic), 2 fixed (root + type), 3 custom
+    int scaleMode = 0;
+    int scaleRoot = 0;          // 0 = C
+    int scaleType = 0;          // index into Harmony scale names
+    int scaleCustom = 0xAB5;    // 12-bit mask, bit 0 = C (default: C major)
+    // rhythm: 0 = free .. 1 = locked on the pulse and patterns of your playing
+    float groove = 0.6f;
     float sustain = 0.5f;       // chance that an answer note is held as long as you hold yours
     float bend = 0.f;           // 0 = ignores your bends/vibrato .. 1 = follows them (pitch bend)
     int bendRange = 2;          // synth's pitch bend range, semitones
@@ -77,9 +91,9 @@ public:
 // (each entry is two atomics; a reader detects entries overwritten while it was reading).
 struct TimelineEvent {
     enum Kind : uint8_t { PlayerOn, PlayerOff, AnswerOn, AnswerOff, Trigger };
-    enum Reason : uint8_t { Silence, Interjection, Reflex, Held };
+    enum Reason : uint8_t { Silence, Interjection, Reflex, Held, PlayAlong };
     int64_t time = 0;   // samples
-    uint8_t kind = 0, pitch = 0, reason = 0;
+    uint8_t kind = 0, pitch = 0, reason = 0, vel = 0;
     float info = 0.f;   // Trigger: seconds waited (Silence, Held) or notes heard (Interjection/Reflex)
 };
 
@@ -96,7 +110,8 @@ public:
         uint32_t infoBits;
         std::memcpy(&infoBits, &e.info, 4);
         s.a.store((uint64_t)e.time, std::memory_order_relaxed);
-        s.b.store((uint64_t)e.kind | (uint64_t)e.pitch << 8 | (uint64_t)e.reason << 16 | (uint64_t)infoBits << 32,
+        s.b.store((uint64_t)e.kind | (uint64_t)e.pitch << 8 | (uint64_t)e.reason << 16 | (uint64_t)e.vel << 24 |
+                      (uint64_t)infoBits << 32,
                   std::memory_order_relaxed);
         written_.store(n + 1, std::memory_order_release);
     }
@@ -110,7 +125,7 @@ public:
             TimelineEvent& e = out[i - begin];
             e.time = (int64_t)s.a.load(std::memory_order_relaxed);
             const uint64_t b = s.b.load(std::memory_order_relaxed);
-            e.kind = (uint8_t)b; e.pitch = (uint8_t)(b >> 8); e.reason = (uint8_t)(b >> 16);
+            e.kind = (uint8_t)b; e.pitch = (uint8_t)(b >> 8); e.reason = (uint8_t)(b >> 16); e.vel = (uint8_t)(b >> 24);
             const uint32_t infoBits = (uint32_t)(b >> 32);
             std::memcpy(&e.info, &infoBits, 4);
         }
@@ -176,6 +191,14 @@ public:
     const Analyzer& analyzer() const { return analyzer_; }
     const Harmony& harmony() const { return harmony_; }
     void updateHarmony();
+    // the scale it plays in (depends on Scale mode); 0 = free
+    uint16_t answerScaleMask() const;
+    const PulseTracker& pulse() const { return pulse_; }
+    bool grooveActive() const { return p_.groove >= 0.1f && pulse_.valid(); }
+    // the far left of "When does it answer?": it plays along with you on your pulse
+    static constexpr float kPlayAlongZone = 0.03f;
+    bool playingAlong() const { return grooveActive() && p_.patience < kPlayAlongZone; }
+    float lastAttackDb() const { return lastAttackDb_; }   // audio: level of your last attack
 
     // Exposed for tests: generate an answer from the current memory.
     int generate(int n, GenNote* out, int capacity);
@@ -205,6 +228,11 @@ private:
     int foldToRange(int p) const;
     static int snapToMask(int p, uint16_t mask, int dir);
     int randomTone(int prev, bool chordTone);
+    float answerVel(float imitated, float followed, float mean, float accent);
+    float playerMeanVel() const;
+    int generateGroove(int64_t t, int heard, GenNote* out, int cap);
+    void playAlongBeat(int64_t beat, int64_t now);
+    void timelinePush(int64_t t, uint8_t kind, int pitch, int vel);
     float rndSigned() { return rnd() * 2.f - 1.f; }
 
     double sr_ = 44100.0;
@@ -235,6 +263,12 @@ private:
     float midiBendSemis_ = 0.f;
     float bendSmooth_ = 0.f;
     int lastBendOut_ = 8192;
+    float lastAttackDb_ = -120.f;
+    // rhythm
+    PulseTracker pulse_;
+    EventRing<256> onsets_;        // everything you played lately (kept even when memory is frozen)
+    int64_t lastPlayAlongBeat_ = -1000000000;
+    bool playAlongShown_ = false;
 
     // MIDI input
     MidiIn midiQ_[1024];

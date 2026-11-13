@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(LPFConversations VERSION 0.6.1 LANGUAGES C CXX)
+project(LPFConversations VERSION 0.7.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,7 +17,7 @@ option(LPFD_BUILD_TESTS "Build tests and the command-line tool" ON)
 set(LPFD_JUCE_DIR "" CACHE PATH "Local JUCE checkout (otherwise downloaded)")
 
 # ---- core (no dependencies) ----
-add_library(lpfd_core STATIC core/analyzer.cpp core/engine.cpp)
+add_library(lpfd_core STATIC core/analyzer.cpp core/engine.cpp core/pulse.cpp)
 target_include_directories(lpfd_core PUBLIC core)
 set_target_properties(lpfd_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(NOT MSVC)

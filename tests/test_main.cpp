@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <new>
 #include <algorithm>
+#include <array>
 #include <random>
 #include <string>
 #include <vector>
@@ -315,7 +316,7 @@ static Engine makeEngine(Params p) {
 static void testReflex() {
     std::printf("[reactivity: reflex]\n");
     Params p;
-    p.patience = 0.f; p.interruption = 1.f; p.length = 1.f;
+    p.patience = 0.05f; p.interruption = 1.f; p.length = 1.f;
     Engine e = makeEngine(p);
     std::vector<int> pitches = {60, 64, 67, 72, 67, 64};
     std::vector<float> sig((size_t)(SR * 3.0), 0.f);
@@ -470,7 +471,7 @@ static void testFidelity() {
 static void testGrid() {
     std::printf("[grid sync]\n");
     Params p;
-    p.patience = 0.f; p.interruption = 1.f; p.grid = 3;
+    p.patience = 0.05f; p.interruption = 1.f; p.grid = 3;
     Engine e = makeEngine(p);
     std::vector<float> sig((size_t)(SR * 3.0), 0.f);
     for (auto& n : melody(0.13, 6, 0.37, 0.2, {60, 63, 67})) addTone(sig, n);
@@ -498,7 +499,10 @@ static void testNoAllocAndFuzz(uint32_t seed = 7) {
         p.rangeLow = 20 + (int)(u(rng) * 60); p.rangeHigh = p.rangeLow + (int)(u(rng) * 50);
         p.sensitivity = u(rng); p.grid = run % 4; p.channel = 1 + run % 16;
         p.bright = run % 3 == 1; p.randomness = u(rng); p.humanize = u(rng);
-        p.dynamics = u(rng); p.sustain = u(rng); p.bend = run % 2 ? u(rng) : 0.f; p.bendRange = run % 3 ? 2 : 12;
+        p.velMode = run % 4; p.velAmount = 2.f * u(rng); p.velAuto = run % 3 != 0;
+        p.scaleMode = run % 4; p.scaleRoot = run % 12; p.scaleType = run % 11; p.scaleCustom = (int)(u(rng) * 4095);
+        p.groove = run % 3 ? u(rng) : 1.f;
+        p.sustain = u(rng); p.bend = run % 2 ? u(rng) : 0.f; p.bendRange = run % 3 ? 2 : 12;
         if (run % 4 == 3) { p.lowCutHz = 40.f + 400.f * u(rng); p.highCutHz = p.lowCutHz * (2.f + 30.f * u(rng)); }
         Engine e = makeEngine(p);
         std::vector<float> sig((size_t)(SR * 6.0), 0.f);
@@ -707,7 +711,7 @@ static void testRandomAndHumanize() {
 
     // reflex delays: steady without humanize, varied (but still quick) with it
     auto delays = [&](float hum, double& mean, double& sd, double& vsd) {
-        Params p; p.patience = 0.f; p.interruption = 1.f; p.humanize = hum;
+        Params p; p.patience = 0.05f; p.interruption = 1.f; p.humanize = hum;
         Engine e = makeEngine(p);
         std::vector<float> s2((size_t)(SR * 6.0), 0.f);
         auto mel = melody(0.2, 12, 0.4, 0.3, {60, 64, 67, 72});
@@ -781,7 +785,7 @@ static Capture runMidi(Engine& e, std::vector<MIn> in, double seconds, bool feed
 static void testMidiInput() {
     std::printf("[MIDI input]\n");
     {
-        Params p; p.source = 1; p.patience = 0.f; p.interruption = 1.f;
+        Params p; p.source = 1; p.patience = 0.05f; p.interruption = 1.f;
         Engine e = makeEngine(p);
         auto in = midiPhrase(0.2, {60, 64, 67, 72, 67, 64}, 0.4, 0.3);
         auto cap = runMidi(e, in, 6.0);
@@ -959,7 +963,7 @@ static void testReactivityV6() {
     }
     // "every note" + cut in half-way: every note answered straight away
     for (float inter : {0.5f, 0.8f}) {
-        Params pr; pr.patience = 0.f; pr.interruption = inter; pr.humanize = 0.f; pr.randomness = 0.f;
+        Params pr; pr.patience = 0.05f; pr.interruption = inter; pr.humanize = 0.f; pr.randomness = 0.f;
         Engine e = makeEngine(pr);
         std::vector<int> mel = {52, 55, 57, 59, 62, 59, 57, 55, 52, 55, 57, 60};
         auto sig = pluckPhrase(mel, std::vector<double>(mel.size(), 0.35), 0.22);
@@ -1020,26 +1024,55 @@ static void testBandV6() {
 
 static void testExpressionV6() {
     std::printf("[v0.6 expression: dynamics, held notes, bends]\n");
-    // dynamics: soft and loud notes in turn
-    auto spread = [](float dyn) {
-        Params pr; pr.patience = 0.f; pr.interruption = 1.f; pr.dynamics = dyn; pr.humanize = 0.f; pr.contrast = 0.f;
+    // velocity: soft and loud notes in turn (audio), answers follow note by note
+    auto spread = [](int mode, float amount, bool midi) {
+        Params pr; pr.patience = 0.05f; pr.interruption = 1.f; pr.velMode = mode; pr.velAmount = amount;
+        pr.humanize = 0.f; pr.contrast = 0.f; pr.groove = 0.f; pr.length = 1.f;
+        if (midi) pr.source = 1;
         Engine e = makeEngine(pr);
-        std::vector<float> sig((size_t)(SR * 6.0), 0.f);
         std::vector<int> mel = {60, 62, 64, 65, 67, 65, 64, 62, 60, 62, 64, 65};
-        for (size_t i = 0; i < mel.size(); ++i) addTone(sig, {0.2 + i * 0.35, 0.25, midiToHz(mel[i]), i % 2 ? 0.4 : 0.04});
-        auto o = ons(runEngine(e, sig));
-        int lo = 127, hi = 0;
-        for (auto& m : o) { lo = std::min(lo, m.vel); hi = std::max(hi, m.vel); }
-        return std::make_pair(lo, hi);
+        Capture cap;
+        if (midi) {
+            std::vector<MIn> in;
+            for (size_t i = 0; i < mel.size(); ++i) {
+                in.push_back({0.2 + i * 0.35, true, 1, mel[i], i % 2 ? 110 : 30});
+                in.push_back({0.2 + i * 0.35 + 0.25, false, 1, mel[i], 0});
+            }
+            cap = runMidi(e, in, 6.0);
+        } else {
+            std::vector<float> sig((size_t)(SR * 6.0), 0.f);
+            for (size_t i = 0; i < mel.size(); ++i) addTone(sig, {0.2 + i * 0.35, 0.25, midiToHz(mel[i]), i % 2 ? 0.4 : 0.04});
+            cap = runEngine(e, sig);
+        }
+        // the answer to each of your notes, matched to it: loud after loud?
+        auto o = ons(cap);
+        int lo = 127, hi = 0, agree = 0, total = 0;
+        for (size_t i = 3; i < mel.size(); ++i) {
+            const double t = 0.2 + i * 0.35;
+            for (auto& m : o)
+                if (m.t / SR >= t && m.t / SR < t + 0.1) {
+                    lo = std::min(lo, m.vel); hi = std::max(hi, m.vel);
+                    ++total;
+                    if ((m.vel > 64) == (i % 2 == 1)) ++agree;
+                    break;
+                }
+        }
+        return std::array<int, 4>{lo, hi, agree, total};
     };
-    auto d1 = spread(1.f), d0 = spread(0.f);
-    std::printf("  soft/loud playing: velocities %d..%d (dynamics 100 %%), %d..%d (0 %%)\n", d1.first, d1.second, d0.first, d0.second);
-    CHECK(d1.second - d1.first > 60, "dynamics: answers only span %d..%d", d1.first, d1.second);
-    CHECK(d0.second - d0.first < 20, "even dynamics: answers span %d..%d", d0.first, d0.second);
-
+    for (bool midi : {false, true}) {
+        const auto f = spread(0, 1.f, midi), x = spread(0, 2.f, midi), z = spread(0, 0.f, midi), op = spread(2, 1.f, midi), fx = spread(3, 1.f, midi);
+        std::printf("  %s soft/loud: follows %d..%d (%d/%d on the beat), x2 %d..%d, amount 0 %d..%d, opposite %d/%d, fixed %d..%d\n",
+                    midi ? "MIDI" : "audio", f[0], f[1], f[2], f[3], x[0], x[1], z[0], z[1], op[3] - op[2], op[3], fx[0], fx[1]);
+        CHECK(f[3] >= 6 && f[2] == f[3], "%s velocity follow: %d/%d answers match your accents", midi ? "MIDI" : "audio", f[2], f[3]);
+        CHECK(f[1] - f[0] > 50, "%s velocity follow: only %d..%d", midi ? "MIDI" : "audio", f[0], f[1]);
+        CHECK(x[1] - x[0] >= f[1] - f[0], "%s amount 200 %% not wider", midi ? "MIDI" : "audio");
+        CHECK(z[1] - z[0] < 20 && f[1] - f[0] > 3 * (z[1] - z[0]), "%s amount 0 not flat: %d..%d", midi ? "MIDI" : "audio", z[0], z[1]);
+        CHECK(op[2] == 0 && op[3] >= 6, "%s opposite: %d/%d still follow", midi ? "MIDI" : "audio", op[2], op[3]);
+        CHECK(fx[0] == fx[1] && std::abs(fx[0] - 101) <= 1, "%s fixed: %d..%d", midi ? "MIDI" : "audio", fx[0], fx[1]);
+    }
     // held notes: short notes first, then one held 1.5 s
     for (float sus : {1.f, 0.f}) {
-        Params pr; pr.patience = 0.f; pr.interruption = 1.f; pr.sustain = sus; pr.humanize = 0.f; pr.randomness = 0.f;
+        Params pr; pr.patience = 0.05f; pr.interruption = 1.f; pr.sustain = sus; pr.humanize = 0.f; pr.randomness = 0.f;
         Engine e = makeEngine(pr);
         std::vector<float> sig((size_t)(SR * 6.0), 0.f);
         for (auto& n : melody(0.2, 6, 0.2, 0.1, {60, 62, 64, 62, 60, 62})) addTone(sig, n);
@@ -1060,7 +1093,7 @@ static void testExpressionV6() {
 
     // bends: MIDI pitch wheel and an audio bend, followed with pitch bend
     {
-        Params pr; pr.source = 1; pr.patience = 0.f; pr.interruption = 1.f; pr.bend = 1.f; pr.bendRange = 2; pr.sustain = 1.f;
+        Params pr; pr.source = 1; pr.patience = 0.05f; pr.interruption = 1.f; pr.bend = 1.f; pr.bendRange = 2; pr.sustain = 1.f;
         Engine e = makeEngine(pr);
         Capture cap;
         const int B = 256;
@@ -1081,7 +1114,7 @@ static void testExpressionV6() {
         CHECK(!cap.bends.empty() && cap.bends.back().v == 8192, "bend not reset");
     }
     {
-        Params pr; pr.patience = 0.f; pr.interruption = 1.f; pr.bend = 1.f; pr.bendRange = 2; pr.sustain = 1.f;
+        Params pr; pr.patience = 0.05f; pr.interruption = 1.f; pr.bend = 1.f; pr.bendRange = 2; pr.sustain = 1.f;
         Engine e = makeEngine(pr);
         std::vector<float> sig((size_t)(SR * 2.0), 0.f);
         // A3 held 1 s, bent up a semitone and back... a guitar bend (half a semitone, slow)
@@ -1103,6 +1136,201 @@ static void testExpressionV6() {
         std::printf("  audio bend +0.6 st: answer bent to %+.2f st\n", st);
         CHECK(std::fabs(st - 0.6) < 0.15, "audio bend followed to %+.2f st", st);
         CHECK(!cap.bends.empty() && cap.bends.back().v == 8192, "audio bend not reset");
+    }
+}
+
+// ---- v0.7: MIDI note-offs on the timeline, scale choice, rhythm ----
+static void testTimelineMidiV7() {
+    std::printf("[v0.7 MIDI notes close on the timeline (legato, chords)]\n");
+    Params pr; pr.source = 1; pr.respond = false;
+    Engine e = makeEngine(pr);
+    std::vector<MIn> in;
+    // legato: each note released 50 ms after the next one starts
+    for (int i = 0; i < 6; ++i) {
+        in.push_back({0.2 + i * 0.3, true, 1, 60 + i, 90});
+        in.push_back({0.2 + (i + 1) * 0.3 + 0.05, false, 1, 60 + i, 0});
+    }
+    // a chord, released together
+    for (int p : {48, 52, 55}) { in.push_back({2.5, true, 1, p, 80}); in.push_back({3.2, false, 1, p, 0}); }
+    runMidi(e, in, 4.0);
+    std::vector<TimelineEvent> tl(Timeline::kSize);
+    tl.resize((size_t)e.timeline().read(tl.data(), (int)tl.size()));
+    int open[128] = {}, ons = 0, offs = 0, velOk = 0;
+    for (auto& ev : tl) {
+        if (ev.kind == TimelineEvent::PlayerOn) { ++open[ev.pitch]; ++ons; if (ev.vel == 90 || ev.vel == 80) ++velOk; }
+        if (ev.kind == TimelineEvent::PlayerOff) { --open[ev.pitch]; ++offs; }
+    }
+    int stillOpen = 0;
+    for (int p = 0; p < 128; ++p) stillOpen += open[p];
+    std::printf("  9 notes (legato + chord): %d on, %d off, %d left open, velocities shown %d/9\n", ons, offs, stillOpen, velOk);
+    CHECK(ons == 9 && offs == 9 && stillOpen == 0, "MIDI timeline: %d on / %d off / %d open", ons, offs, stillOpen);
+    CHECK(velOk == 9, "MIDI timeline velocities: %d/9", velOk);
+}
+
+static void testScaleV7() {
+    std::printf("[v0.7 scale: auto, free, fixed, custom]\n");
+    auto pcs = [](int mode, int root, int type, int custom, float rnd) {
+        Params pr; pr.source = 1; pr.patience = 0.05f; pr.interruption = 1.f; pr.scaleMode = mode; pr.scaleRoot = root;
+        pr.scaleType = type; pr.scaleCustom = custom; pr.scaleLock = 1.f; pr.randomness = rnd; pr.groove = 0.f;
+        Engine e = makeEngine(pr);
+        std::vector<MIn> in;
+        const int cmaj[] = {60, 62, 64, 65, 67, 69, 71, 72};
+        for (int r = 0; r < 4; ++r)
+            for (int i = 0; i < 8; ++i) {
+                const double t = 0.2 + (r * 8 + i) * 0.25;
+                in.push_back({t, true, 1, cmaj[(i * 3 + r) % 8], 90});
+                in.push_back({t + 0.2, false, 1, cmaj[(i * 3 + r) % 8], 0});
+            }
+        auto o = ons(runMidi(e, in, 10.0));
+        uint16_t m = 0;
+        for (auto& n : o) m |= (uint16_t)(1 << (n.pitch % 12));
+        return std::make_pair(m, (int)o.size());
+    };
+    auto in = [](uint16_t m, uint16_t allowed) { return (m & ~allowed) == 0; };
+    const uint16_t cMaj = 0xAB5, ebMaj = (uint16_t)(((0xAB5 << 3) | (0xAB5 >> 9)) & 0xFFF);
+    auto a = pcs(0, 0, 0, 0, 0.5f), fx = pcs(2, 3, 0, 0, 0.5f), cu = pcs(3, 0, 0, 0x091, 0.5f), fr = pcs(1, 0, 0, 0, 0.8f);
+    auto bits = [](uint16_t m) { int c = 0; for (int i = 0; i < 12; ++i) c += m >> i & 1; return c; };
+    std::printf("  playing C major: auto %d pcs (in C major: %s), fixed Eb major %d pcs (%s), custom C-E-G %d pcs (%s), free %d pcs\n",
+                bits(a.first), in(a.first, cMaj) ? "yes" : "no", bits(fx.first), in(fx.first, ebMaj) ? "yes" : "no",
+                bits(cu.first), in(cu.first, 0x091) ? "yes" : "no", bits(fr.first));
+    CHECK(a.second > 10 && in(a.first, cMaj), "auto scale: notes outside C major");
+    CHECK(fx.second > 10 && in(fx.first, ebMaj), "fixed Eb major: notes outside");
+    CHECK(cu.second > 10 && in(cu.first, 0x091), "custom C-E-G: notes outside");
+    CHECK(!in(fr.first, cMaj), "free: never left C major with randomness 80 %%");
+}
+
+// a rhythmic phrase on MIDI: the same one-bar pattern repeated, at `bpm`, with accents
+static std::vector<MIn> rhythmPhrase(double t0, double bpm, int bars, const std::vector<double>& beats,
+                                     const std::vector<int>& pitches, double jitter = 0.0, uint32_t seed = 1) {
+    std::vector<MIn> in;
+    std::mt19937 rng(seed);
+    std::normal_distribution<double> j(0.0, jitter > 0 ? jitter : 1e-9);
+    const double P = 60.0 / bpm;
+    for (int b = 0; b < bars; ++b)
+        for (size_t i = 0; i < beats.size(); ++i) {
+            const double t = t0 + (b * 4 + beats[i]) * P + (jitter > 0 ? j(rng) : 0.0);
+            const int vel = std::fmod(beats[i], 1.0) == 0.0 ? 110 : 60;
+            in.push_back({t, true, 1, pitches[i % pitches.size()], vel});
+            in.push_back({t + 0.4 * P, false, 1, pitches[i % pitches.size()], 0});
+        }
+    return in;
+}
+
+static void testRhythmV7() {
+    std::printf("[v0.7 rhythm: your pulse, answers on it, playing along]\n");
+    const std::vector<double> pat = {0.0, 1.0, 1.5, 2.0, 3.0, 3.5};       // x . x x x . x x (in 8ths)
+    const std::vector<int> pitches = {57, 60, 62, 64, 60, 62};
+    // the pulse it hears
+    {
+        Params pr; pr.source = 1; pr.channel = 2; pr.respond = false;
+        Engine e = makeEngine(pr);
+        runMidi(e, rhythmPhrase(0.2, 100.0, 3, pat, pitches, 0.008), 7.5);
+        std::printf("  3 bars at 100 BPM (8ths, accents on beats): pulse %.1f BPM, %d per beat, sure %.2f\n",
+                    e.pulse().bpm(), e.pulse().division(), e.pulse().confidence());
+        if (std::getenv("LPFD_RHYTHM_DEBUG")) {
+            const double nb = e.pulse().nextBeat((int64_t)(7.0 * SR)) / SR;
+            std::printf("    next beat after 7 s: %.4f (true grid %.4f), swing %.3f\n", nb, 0.2 + std::ceil((7.0 - 0.2) / 0.6) * 0.6, e.pulse().swing());
+        }
+        CHECK(std::fabs(e.pulse().bpm() - 100.0) < 3.0 && e.pulse().division() == 2 && e.pulse().valid(),
+              "pulse: %.1f BPM / %d", e.pulse().bpm(), e.pulse().division());
+    }
+    // call and response on the pulse: the answer keeps your pattern, on your grid
+    for (float groove : {1.f, 0.f}) {
+        Params pr; pr.source = 1; pr.channel = 2; pr.patience = 0.5f; pr.interruption = 0.f; pr.groove = groove; pr.fidelity = 1.f;
+        pr.contrast = 0.f; pr.randomness = 0.f; pr.humanize = 0.f; pr.length = 1.f;
+        Engine e = makeEngine(pr);
+        auto in = rhythmPhrase(0.2, 100.0, 2, pat, pitches, 0.008);
+        auto o = ons(runMidi(e, in, 12.0));
+        const double P = 0.6, start = 0.2;
+        int onGrid = 0;
+        double worst = 0.0;
+        for (auto& n : o) {
+            const double x = (n.t / SR - start) / (P / 2);
+            const double d = std::fabs(x - std::round(x)) * P / 2;
+            worst = std::max(worst, d);
+            if (d < 0.015) ++onGrid;
+        }
+        // its rhythm, beat by beat, against yours
+        std::vector<double> yours, its;
+        for (double b : pat) yours.push_back(std::fmod(b, 4.0));
+        if (!o.empty()) {
+            const double t0 = o[0].t / SR;
+            for (auto& n : o) if (n.t / SR - t0 < 4 * P - 0.05) its.push_back(std::round((n.t / SR - t0) / (P / 2)) / 2.0);
+        }
+        bool same = its.size() == yours.size();
+        for (size_t i = 0; same && i < its.size(); ++i) same = std::fabs(its[i] - yours[i]) < 0.01;
+        std::printf("  groove %.0f %%: %zu answer notes, %d on your 8th-note grid (worst %.0f ms), first bar %s your pattern\n",
+                    groove * 100, o.size(), onGrid, worst * 1000, same ? "repeats" : "differs from");
+        if (std::getenv("LPFD_RHYTHM_DEBUG")) for (auto& n : o) std::printf("    %.4f  (%.1f 8ths) p%d\n", n.t / SR, (n.t / SR - start) / (P / 2), n.pitch);
+        if (groove > 0.5f) {
+            CHECK(!o.empty() && onGrid == (int)o.size(), "groove: %d/%zu on grid", onGrid, o.size());
+            CHECK(same, "groove: pattern not kept");
+        }
+    }
+    // playing along: patience at its left end
+    {
+        Params pr; pr.source = 1; pr.channel = 2; pr.patience = 0.f; pr.groove = 1.f; pr.fidelity = 1.f; pr.contrast = 0.f;
+        pr.randomness = 0.f; pr.humanize = 0.f;
+        Engine e = makeEngine(pr);
+        auto in = rhythmPhrase(0.2, 100.0, 6, pat, pitches, 0.008);
+        auto cap = runMidi(e, in, 18.0);
+        auto o = ons(cap);
+        const double P = 0.6;
+        int during = 0, onGrid = 0, canon = 0, after = 0;
+        o.erase(std::remove_if(o.begin(), o.end(), [](const Midi& n) { return n.t / SR < 0.2 + 8 * 0.6 - 0.05; }), o.end());
+        for (auto& n : o) {
+            const double t = n.t / SR;
+            if (t < 0.2 + 24 * P) ++during; else if (t > 0.2 + 30 * P) ++after;
+            const double x = (t - 0.2) / (P / 2);
+            if (std::fabs(x - std::round(x)) * P / 2 < 0.015) ++onGrid;
+            // a bar after one of yours, same place
+            for (auto& m : in) if (m.on && std::fabs(t - (m.t + 4 * P)) < 0.02) { ++canon; break; }
+        }
+        std::printf("  playing along (patience 0, groove 100 %%): %d notes while you play, %d on the grid, %d one bar after yours, %d long after you stop\n",
+                    during, onGrid, canon, after);
+        CHECK(during >= 14, "play along: only %d notes", during);
+        CHECK(onGrid == (int)o.size(), "play along: %d/%zu on grid", onGrid, o.size());
+        CHECK(canon >= during * 8 / 10, "play along: %d/%d a bar after yours", canon, during);
+        CHECK(after == 0, "play along: %d notes after you stopped", after);
+        std::string why;
+        CHECK(balanced(cap, why), "play along: %s", why.c_str());
+        // contrast: it plays in your gaps
+        pr.contrast = 1.f;
+        Engine e2 = makeEngine(pr);
+        auto o2 = ons(runMidi(e2, in, 18.0));
+        o2.erase(std::remove_if(o2.begin(), o2.end(), [](const Midi& n) { return n.t / SR < 0.2 + 8 * 0.6 - 0.05; }), o2.end());
+        int clash = 0;
+        for (auto& n : o2) for (auto& m : in) if (m.on && std::fabs(n.t / SR - m.t) < 0.03) { ++clash; break; }
+        if (std::getenv("LPFD_RHYTHM_DEBUG")) {
+            for (auto& n : o) { const double x = (n.t / SR - 0.2) / 0.3; std::printf("    along %.4f (%.2f 8ths)\n", n.t / SR, x); }
+            for (auto& n : o2) { const double x = (n.t / SR - 0.2) / 0.3; std::printf("    fill %.4f (%.2f 8ths)\n", n.t / SR, x); }
+        }
+        std::printf("  playing along with Contrast 100 %%: %zu notes, %d at the same time as yours\n", o2.size(), clash);
+        CHECK(o2.size() >= 10 && clash <= (int)o2.size() / 10, "play along fill: %d/%zu clash", clash, o2.size());
+    }
+    // drums: sounds without pitch (audio clicks on a pulse) get rhythmic answers on one or two notes
+    {
+        Params pr; pr.patience = 0.5f; pr.interruption = 0.f; pr.groove = 1.f; pr.fidelity = 1.f; pr.contrast = 0.f;
+        pr.randomness = 0.f; pr.humanize = 0.f;
+        Engine e = makeEngine(pr);
+        std::vector<float> sig((size_t)(SR * 12.0), 0.f);
+        std::mt19937 rng(4);
+        std::normal_distribution<float> nd(0.f, 1.f);
+        for (int b = 0; b < 2; ++b)
+            for (double beat : pat) {
+                const int s0 = (int)((0.2 + (b * 4 + beat) * 0.6) * SR);
+                const float a = std::fmod(beat, 1.0) == 0.0 ? 0.5f : 0.2f;
+                for (int i = 0; i < (int)(0.06 * SR); ++i) sig[(size_t)(s0 + i)] += a * nd(rng) * std::exp(-i / (0.012f * (float)SR));
+            }
+        auto o = ons(runEngine(e, sig));
+        int pcs[128] = {}, distinct = 0, onGrid = 0;
+        for (auto& n : o) {
+            if (!pcs[n.pitch]++) ++distinct;
+            const double x = (n.t / SR - 0.2) / 0.3;
+            if (std::fabs(x - std::round(x)) * 0.3 < 0.02) ++onGrid;
+        }
+        std::printf("  drum hits: pulse %.1f BPM, %zu answer notes on %d pitches, %d on the grid\n", e.pulse().bpm(), o.size(), distinct, onGrid);
+        CHECK(o.size() >= 6 && distinct <= 2 && onGrid == (int)o.size(), "drums: %zu notes, %d pitches, %d on grid", o.size(), distinct, onGrid);
     }
 }
 
@@ -1132,6 +1360,9 @@ int main() {
     testReactivityV6();
     testBandV6();
     testExpressionV6();
+    testTimelineMidiV7();
+    testScaleV7();
+    testRhythmV7();
     testNoAllocAndFuzz();
     std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
