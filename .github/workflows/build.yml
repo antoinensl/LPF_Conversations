@@ -28,7 +28,7 @@ jobs:
             name: Linux
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Linux dependencies
         if: runner.os == 'Linux'
@@ -63,7 +63,7 @@ jobs:
           cp README.md "$OUT/"
           if [ "$RUNNER_OS" = "Windows" ]; then 7z a "$OUT.zip" "$OUT" > /dev/null; else zip -qry "$OUT.zip" "$OUT"; fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: LPF-Conversations-${{ matrix.name }}
           path: LPF-Conversations-${{ matrix.name }}.zip
@@ -74,8 +74,12 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Version
         id: ver
@@ -84,12 +88,20 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "Version $V"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - name: Checksums
+        run: cd dist && sha256sum *.zip | tee SHA256SUMS.txt
+
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/*.zip
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
           name: Conversations v${{ steps.ver.outputs.version }}
@@ -98,5 +110,8 @@ jobs:
           body: |
             VST3, AU (macOS) and Standalone plugin, plus the command-line tool.
             Unsigned binaries: see "Install" in the README (macOS quarantine, Windows unblock).
+            Verify a download: gh attestation verify <file>.zip -R lifepassfilter/LPF_Conversations (checksums in SHA256SUMS.txt).
             The README also covers routing in Reaper, Ableton Live and the standalone app.
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
