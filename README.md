@@ -144,7 +144,6 @@ Extra fuzzing: `LPFD_FUZZ_SEEDS=40 ./build/lpfd_tests` runs the fuzz test with 4
 
 Fonts: Atkinson Hyperlegible and Space Mono (SIL Open Font License, `assets/fonts/OFL-*.txt`), embedded in the plugin.
 
-License: JUCE 8 is available under AGPLv3 or a commercial JUCE licence. To distribute binaries, publish this code under AGPLv3 or get a JUCE licence.
 
 ## Layout
 
@@ -173,3 +172,9 @@ License: JUCE 8 is available under AGPLv3 or a commercial JUCE licence. To distr
 - The memory is not saved with the project (only the settings are).
 - Bends are measured from where your note started: a slide wide enough to be heard as a new note starts a new answer instead of bending the old one.
 - Ideas: polyphonic answers (chords), glides of its own between its notes, a MIDI corpus loaded in advance ("learn" a style), timbre → CC (brightness, noisiness) to modulate the synth, a Max for Live device, a Schwung module for the Move.
+
+## License
+
+© 2026 Antoine Boucherikha (Life Pass Filter). Conversations is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License, version 3 (see `LICENSE`). It comes with no warranty.
+
+It is built with JUCE (used under AGPLv3) and other open-source components listed in `THIRD_PARTY_NOTICES.md`. Every release zip includes these files.

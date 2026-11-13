@@ -60,7 +60,8 @@ jobs:
           else cp "$ART/Standalone/Conversations" "$OUT/"; fi
           CLI=$(find build -maxdepth 3 -type f \( -name conversations_cli -o -name conversations_cli.exe \) | head -1)
           cp "$CLI" "$OUT/"
-          cp README.md "$OUT/"
+          cp README.md LICENSE THIRD_PARTY_NOTICES.md "$OUT/"
+          cp -R licenses "$OUT/"
           if [ "$RUNNER_OS" = "Windows" ]; then 7z a "$OUT.zip" "$OUT" > /dev/null; else zip -qry "$OUT.zip" "$OUT"; fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
